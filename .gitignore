@@ -1,0 +1,3 @@
+# ignore these files because they contain sensitive information and are not necessary for the bot to function properly
+.env
+.venv/
