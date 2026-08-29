@@ -6,6 +6,8 @@ A Discord music bot built with Python and `discord.py`.
 
 Vynlo is focused on making music playback simple without filling a server with commands. It uses a **visual player panel with buttons** for controlling playback and an interactive queue for adding music.
 
+Simply create a music channel dedicated to Vynlo, and enter !play [url]. Let Vynlo handle the rest through the modern UI modal.
+
 
 
 
