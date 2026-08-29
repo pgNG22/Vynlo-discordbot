@@ -23,15 +23,75 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
+queues = {}
+
+
+def build_queue_message(guild_id):
+    queue = queues.get(guild_id, [])
+    if not queue:
+        return "The queue is empty."
+
+    lines = ["Now queued:"]
+    for index, item in enumerate(queue, start=1):
+        lines.append(f"{index}. {item['title']}")
+    return "\n".join(lines)
+
+
+async def extract_audio_info(url):
+    ydl_opts = {
+        "format": "bestaudio",
+        "noplaylist": True,
+    }
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = await asyncio.to_thread(
+            ydl.extract_info,
+            url,
+            download=False,
+        )
+
+    if info is None:
+        raise ValueError("Could not find audio for the provided URL.")
+
+    if "entries" in info and info["entries"]:
+        info = info["entries"][0]
+
+    return info
+
+
+async def play_next_in_queue(ctx):
+    guild_queue = queues.get(ctx.guild.id, [])
+    if not guild_queue:
+        return
+
+    next_track = guild_queue.pop(0)
+    queue_url = next_track.get("source_url") or next_track.get("url") or next_track.get("stream_url")
+    info = await extract_audio_info(queue_url)
+    title = info.get("title") or next_track.get("title") or "Unknown title"
+    audio_url = info.get("url") or next_track.get("stream_url") or queue_url
+
+    source = FFmpegPCMAudio(
+        audio_url,
+        before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+        options="-vn",
+    )
+
+    def after_play(error):
+        if error:
+            print(f"Playback error: {error}")
+            return
+
+        if ctx.guild.id in queues and queues[ctx.guild.id]:
+            asyncio.run_coroutine_threadsafe(play_next_in_queue(ctx), bot.loop)
+
+    ctx.voice_client.play(source, after=after_play)
+    await ctx.send(f"Playing **{title}** 🎵")
+
+
 # this is an event that is triggered when the bot is ready to start working, he will print the bot's username in the console
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
-
-# this is where we can add commands for the bot, in this case we are adding a command called hello that will respond with "Hello!" when the user types !hello
-@bot.command()
-async def hello(ctx):
-    await ctx.send("Hello!")
 
 # here we are adding another ! command, this one would be !join
 @bot.command()
@@ -45,14 +105,42 @@ async def join(ctx):
     # then we are telling the bot to connect to the voice channel that the user is in. This is done by using the connect() method from the discord.py library. This method is asynchronous, so we need to use the await keyword before it.
     await channel.connect()
     await ctx.send(
-        f"Joined {channel}!\n\n"
-        "Functions:\n"
-        "!leave - Disconnects the bot from the voice channel.\n"
-        "!play <url> - Plays audio from the given URL in the voice channel.\n"
-        "!stop - Stops playing audio.\n"
-        "!pause - Pauses the currently playing audio.\n"
-        "!resume - Resumes the paused audio."
-)   
+        f"✅ Joined {channel}!\n\n"
+        "```md\n"
+        "Music Bot Command Menu\n"
+        "======================\n\n"
+        "!play <url>    - Play a song and auto-join if needed\n"
+        "!queue        - Show the current queue\n"
+        "!skip         - Skip the current song\n"
+        "!clearqueue   - Remove every queued song\n"
+        "!leave        - Disconnect the bot\n"
+        "\n"
+        "Current song controls:\n"
+        "!pause        - Pause the current track\n"
+        "!resume       - Resume the paused track\n"
+        "!stop         - Stop playback and clear the queue\n"
+        "```"
+    )
+
+@bot.command()
+async def info(ctx):
+    await ctx.send(
+        "```md\n"
+        "Vynlo Command List\n"
+        "==================\n\n"
+        "!play <url>    - Play a song and auto-join if needed\n"
+        "!queue        - Show the current queue\n"
+        "!skip         - Skip the current song\n"
+        "!clearqueue   - Remove every queued song\n"
+        "!leave        - Disconnect the bot\n"
+        "\n"
+        "Current song controls:\n"
+        "!pause        - Pause the current track\n"
+        "!resume       - Resume the paused track\n"
+        "!stop         - Stop playback and clear the queue\n"
+        "```"
+    )
+
 
 @bot.command()
 async def leave(ctx):
@@ -67,7 +155,6 @@ async def leave(ctx):
 # this is for the bot to be able to play audio in a voice channel, this is done by using the FFmpeg library, which is a library that can be used to convert audio and video files. In this case, we are using it to convert an mp3 file to a format that can be played in a voice channel.
 @bot.command()
 async def play(ctx, url):
-
     if ctx.author.voice is None:
         await ctx.send("You are not in a voice channel!")
         return
@@ -75,33 +162,71 @@ async def play(ctx, url):
     if ctx.voice_client is None:
         await ctx.author.voice.channel.connect()
 
-    ydl_opts = {
-        "format": "bestaudio",
-        "noplaylist": True,
+    await ctx.send("Use !info to see the full command list.")
+
+    try:
+        info = await extract_audio_info(url)
+    except Exception:
+        await ctx.send("I could not find audio for that URL. Please try another one.")
+        return
+
+    track = {
+        "title": info.get("title", "Unknown title"),
+        "source_url": url,
+        "url": url,
+        "stream_url": info.get("url") or url,
     }
 
+    guild_queue = queues.setdefault(ctx.guild.id, [])
+
+    if ctx.voice_client.is_playing() or ctx.voice_client.is_paused() or guild_queue:
+        guild_queue.append(track)
+        await ctx.send(f"Added **{track['title']}** to the queue. Position: {len(guild_queue)}")
+        return
+
     await ctx.send("Finding audio...")
+    await ctx.send(f"Playing **{track['title']}** 🎵")
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = await asyncio.to_thread(
-            ydl.extract_info,
-            url,
-            download=False
-        )
-
-    title = info["title"]
-    audio_url = info["url"]
-
-    await ctx.send(f"Playing **{title}** 🎵")
-
-    # stops the audio from dropping out, attempts to retry the connection if it drops out, and sets a maximum delay for reconnecting.
     source = FFmpegPCMAudio(
-    audio_url,
-    before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-    options="-vn"
-)
+        track["stream_url"],
+        before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+        options="-vn",
+    )
 
-    ctx.voice_client.play(source)
+    def after_play(error):
+        if error:
+            print(f"Playback error: {error}")
+            return
+
+        if ctx.guild.id in queues and queues[ctx.guild.id]:
+            asyncio.run_coroutine_threadsafe(play_next_in_queue(ctx), bot.loop)
+
+    ctx.voice_client.play(source, after=after_play)
+
+
+@bot.command()
+async def queue(ctx):
+    await ctx.send(build_queue_message(ctx.guild.id))
+
+
+@bot.command()
+async def skip(ctx):
+    if ctx.voice_client is None:
+        await ctx.send("I am not in a voice channel!")
+        return
+
+    if not ctx.voice_client.is_playing() and not ctx.voice_client.is_paused():
+        await ctx.send("There is nothing playing to skip.")
+        return
+
+    ctx.voice_client.stop()
+    await ctx.send("Skipped the current track.")
+
+
+@bot.command()
+async def clearqueue(ctx):
+    queues[ctx.guild.id] = []
+    await ctx.send("The queue has been cleared.")
 
 @bot.command()
 async def stop(ctx):
@@ -109,8 +234,9 @@ async def stop(ctx):
         await ctx.send("I am not in a voice channel!")
         return
 
+    queues[ctx.guild.id] = []
     ctx.voice_client.stop()
-    await ctx.send("Stopped playing audio.")
+    await ctx.send("Stopped playing audio and cleared the queue.")
 
 @bot.command()
 async def pause(ctx):
@@ -157,4 +283,5 @@ async def testyoutube(ctx, url):
     print(info["url"])
 
 # this now grabs the token from the .env file instead of publicly putting it on git.
-bot.run(os.getenv("DISCORD_TOKEN"))
+if __name__ == "__main__":
+    bot.run(os.getenv("DISCORD_TOKEN"))
