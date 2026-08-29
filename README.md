@@ -1,10 +1,13 @@
 ﻿# Vynlo 🎵
 
-<img width="35" height="35" alt="Vynlo Logo" src="https://github.com/user-attachments/assets/3d72a50f-9a27-447d-9688-9e63cab89a5b" />
+<img align="right" width="140" height="140" alt="Vynlo Logo" src="https://github.com/user-attachments/assets/3d72a50f-9a27-447d-9688-9e63cab89a5b">   
 
 A Discord music bot built with Python and `discord.py`.
 
 Vynlo is focused on making music playback simple without filling a server with commands. It uses a **visual player panel with buttons** for controlling playback and an interactive queue for adding music.
+
+
+
 
 ## Features
 
@@ -21,7 +24,8 @@ Vynlo is focused on making music playback simple without filling a server with c
 
 ## Preview
 
-<!-- Add a screenshot or GIF of the player here -->
+<img width="521" height="221" alt="image" src="https://github.com/user-attachments/assets/fa201b61-fcad-4478-8f4a-154b6003a3e3" />
+
 
 ## Tech
 
