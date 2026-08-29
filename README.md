@@ -1,4 +1,5 @@
-﻿# Vynlo
+﻿# Vynlo <img width="35" height="35" alt="337A39AD-C1A0-4509-BA89-B2760ED0057C" src="https://github.com/user-attachments/assets/3d72a50f-9a27-447d-9688-9e63cab89a5b" />
+
 
 Vynlo is a lightweight Python Discord music bot built with discord.py. It connects to a voice channel, plays music from YouTube links, and handles queue-based playback for a smooth listening experience in your server.
 
