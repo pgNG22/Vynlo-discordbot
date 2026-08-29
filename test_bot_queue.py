@@ -69,6 +69,34 @@ def test_extract_playlist_tracks_keeps_watch_url_as_source_not_stream(monkeypatc
     assert tracks[0]["stream_url"] is None
 
 
+def test_extract_audio_info_uses_youtube_fallback_clients(monkeypatch):
+    captured = {}
+
+    class DummyYDL:
+        def __init__(self, opts):
+            captured["opts"] = opts
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def extract_info(self, url, download=False):
+            return {"title": "Fallback Title", "url": "https://example.com/stream.mp3"}
+
+    monkeypatch.setattr(bot.yt_dlp, "YoutubeDL", DummyYDL)
+
+    info = asyncio.run(bot.extract_audio_info("https://www.youtube.com/watch?v=abc123"))
+
+    assert info["title"] == "Fallback Title"
+    assert captured["opts"]["extractor_args"]["youtube"] == [
+        "player_client=android",
+        "player_client=web",
+        "player_client=tv_embedded",
+    ]
+
+
 def test_resolve_track_audio_populates_stream_url(monkeypatch):
     async def fake_extract_audio_info(url):
         return {"title": "Resolved Title", "url": "https://example.com/stream.mp3"}
@@ -117,3 +145,119 @@ def test_play_next_in_queue_sends_track_title(monkeypatch):
     asyncio.run(bot.play_next_in_queue(fake_ctx))
 
     assert any("Playing **Track 1**" in message for message in messages)
+
+
+def test_get_pause_resume_label_uses_current_voice_state():
+    class FakeVoiceClient:
+        def __init__(self, playing=False, paused=False):
+            self._playing = playing
+            self._paused = paused
+
+        def is_playing(self):
+            return self._playing
+
+        def is_paused(self):
+            return self._paused
+
+    assert bot.get_pause_resume_label(FakeVoiceClient(playing=True)) == "Pause"
+    assert bot.get_pause_resume_label(FakeVoiceClient(paused=True)) == "Resume"
+    assert bot.get_pause_resume_label(FakeVoiceClient()) == "Pause"
+
+
+def test_build_player_embed_shows_queue_and_track_details():
+    bot.queues.clear()
+    bot.queues[321] = [{
+        "title": "Sunset Drive",
+        "artist": "Nova Bloom",
+        "duration": 240,
+    }]
+
+    embed = bot.build_player_embed(321)
+
+    assert embed.title == "🎵 VYNLO"
+    assert "Sunset Drive" in embed.description
+    assert "Nova Bloom" in str(embed.fields[0].value)
+    assert "1" in str(embed.fields[1].value)
+
+
+def test_update_player_panel_creates_panel_when_missing(monkeypatch):
+    bot.player_panels.clear()
+
+    class FakeMessage:
+        def __init__(self):
+            self.id = 555
+
+    class FakeChannel:
+        def __init__(self):
+            self.sent = []
+
+        async def send(self, **kwargs):
+            self.sent.append(kwargs)
+            return FakeMessage()
+
+    class FakeGuild:
+        def __init__(self):
+            self.channel = FakeChannel()
+            self.voice_client = None
+
+        def get_channel(self, channel_id):
+            return self.channel
+
+    fake_guild = FakeGuild()
+    monkeypatch.setattr(bot.bot, "get_guild", lambda guild_id: fake_guild)
+
+    asyncio.run(bot.update_player_panel(321, 999))
+
+    assert (321, 999) in bot.player_panels
+    assert fake_guild.channel.sent
+
+
+def test_build_player_embed_reports_loop_and_volume_state():
+    bot.queues.clear()
+    bot.player_state.clear()
+    bot.queues[321] = [{
+        "title": "Sunset Drive",
+        "artist": "Nova Bloom",
+        "duration": 240,
+    }]
+
+    embed = bot.build_player_embed(321)
+
+    assert "Loop: Off" in embed.footer.text
+    assert "Volume: 100%" in embed.footer.text
+
+
+def test_queue_button_opens_modal_for_interactive_queue_entry():
+    view = bot.MusicPlayerView(123)
+
+    class FakeInteraction:
+        def __init__(self):
+            self.guild = type("Guild", (), {"id": 123})()
+            self.channel = type("Channel", (), {"id": 456})()
+            self.modal = None
+
+        class response:
+            @staticmethod
+            async def send_modal(modal):
+                FakeInteraction.current_modal = modal
+
+    FakeInteraction.current_modal = None
+
+    asyncio.run(view.queue_callback(FakeInteraction()))
+
+    assert FakeInteraction.current_modal is not None
+    assert isinstance(FakeInteraction.current_modal, bot.QueueAddModal)
+
+
+def test_send_temporary_message_sets_auto_delete_timeout():
+    sent = {}
+
+    class FakeCtx:
+        async def send(self, message, **kwargs):
+            sent["message"] = message
+            sent["kwargs"] = kwargs
+
+    asyncio.run(bot.send_temporary_message(FakeCtx(), "hello"))
+
+    assert sent["message"] == "hello"
+    assert sent["kwargs"]["delete_after"] == 5
