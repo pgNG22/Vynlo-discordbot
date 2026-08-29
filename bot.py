@@ -241,39 +241,33 @@ async def join(ctx):
     await channel.connect()
     await ctx.send(
         f"✅ Joined {channel}!\n\n"
-        "```md\n"
-        "Music Bot Command Menu\n"
-        "======================\n\n"
-        "!play <url>    - Play a song and auto-join if needed\n"
-        "!queue        - Show the current queue\n"
-        "!skip         - Skip the current song\n"
-        "!clearqueue   - Remove every queued song\n"
-        "!leave        - Disconnect the bot\n"
-        "\n"
-        "Current song controls:\n"
-        "!pause        - Pause the current track\n"
-        "!resume       - Resume the paused track\n"
-        "!stop         - Stop playback and clear the queue\n"
-        "```"
+        "**Vynlo music controls**\n"
+        "• `!play <url>` — play a song or playlist\n"
+        "• `!queue` — see the current queue\n"
+        "• `!skip` — skip the current track\n"
+        "• `!clearqueue` — clear the queue\n"
+        "• `!leave` — disconnect the bot\n\n"
+        "**Playback controls**\n"
+        "• `!pause` — pause the music\n"
+        "• `!resume` — resume playback\n"
+        "• `!stop` — stop and clear everything\n"
     )
 
 @bot.command()
 async def info(ctx):
     await ctx.send(
-        "```md\n"
-        "Vynlo Command List\n"
-        "==================\n\n"
-        "!play <url>    - Play a song or playlist\n"
-        "!queue        - Show the current queue\n"
-        "!skip         - Skip the current song\n"
-        "!clearqueue   - Remove every queued song\n"
-        "!leave        - Disconnect the bot\n"
-        "\n"
-        "Current song controls:\n"
-        "!pause        - Pause the current track\n"
-        "!resume       - Resume the paused track\n"
-        "!stop         - Stop playback and clear the queue\n"
-        "```"
+        "🎵 **Vynlo music bot**\n\n"
+        "**What I can do**\n"
+        "• `!play <url>` — play a single track or a whole playlist\n"
+        "• `!queue` — show what’s queued up next\n"
+        "• `!skip` — skip the currently playing track\n"
+        "• `!clearqueue` — remove everything from the queue\n"
+        "• `!leave` — disconnect the bot from the voice channel\n\n"
+        "**Playback controls**\n"
+        "• `!pause` — pause the current track\n"
+        "• `!resume` — continue where you left off\n"
+        "• `!stop` — stop playback and clear the queue\n\n"
+        "**Tip**: You can paste a YouTube song link or playlist link directly after `!play`."
     )
 
 
@@ -432,24 +426,6 @@ async def resume(ctx):
 
     ctx.voice_client.resume()
     await ctx.send("Resumed audio.")
-
-@bot.command()
-async def testyoutube(ctx, url):
-
-    ydl_opts = {
-        "format": "bestaudio",
-        "noplaylist": True,
-    }
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = await asyncio.to_thread(
-            ydl.extract_info,
-            url,
-            download=False
-        )
-
-    await ctx.send(f"Title: {info['title']}")
-    print(info["url"])
 
 # this now grabs the token from the .env file instead of publicly putting it on git.
 if __name__ == "__main__":
