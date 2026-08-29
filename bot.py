@@ -5,6 +5,8 @@ from dotenv import load_dotenv
 import discord
 # here we are telling the bot to use the commands extension from discord.py
 from discord.ext import commands
+#ffmpeg library which is used to convert audio fles to a format for a voice channel
+from discord import FFmpegPCMAudio
 
 # "Look for a .env file and load the variables inside it."
 load_dotenv()
@@ -42,18 +44,74 @@ async def join(ctx):
     await ctx.send(
         f"Joined {channel}!\n\n"
         "Functions:\n"
-        "!leave - Disconnects the bot from the voice channel."
+        "!leave - Disconnects the bot from the voice channel.\n"
+        "!play <url> - Plays audio from the given URL in the voice channel.\n"
+        "!stop - Stops playing audio.\n"
+        "!pause - Pauses the currently playing audio.\n"
+        "!resume - Resumes the paused audio."
 )   
 
 @bot.command()
 async def leave(ctx):
-    if ctx.author.voice is None:
+    if ctx.voice_client is None:
         await ctx.send("I am not in a voice channel!")
         return
     connectedchannel = ctx.voice_client
     # Disconnect the bot from the voice channel
     await connectedchannel.disconnect()
     await ctx.send("Disconnected from the voice channel!")
+
+# this is for the bot to be able to play audio in a voice channel, this is done by using the FFmpeg library, which is a library that can be used to convert audio and video files. In this case, we are using it to convert an mp3 file to a format that can be played in a voice channel.
+@bot.command()
+# command would look like !play <url> where url is the url of the audio file you want to play because of play(ctx, url)
+async def play(ctx, url):
+
+    if ctx.author.voice is None:
+        await ctx.send("You are not in a voice channel!")
+        return
+
+    if ctx.voice_client is None:
+        await ctx.author.voice.channel.connect()
+
+    await ctx.send(f"Playing audio from {url}...")
+
+    source = FFmpegPCMAudio(url)
+    ctx.voice_client.play(source)
+
+@bot.command()
+async def stop(ctx):
+    if ctx.voice_client is None:
+        await ctx.send("I am not in a voice channel!")
+        return
+
+    ctx.voice_client.stop()
+    await ctx.send("Stopped playing audio.")
+
+@bot.command()
+async def pause(ctx):
+    if ctx.voice_client is None:
+        await ctx.send("I am not in a voice channel!")
+        return
+
+    if not ctx.voice_client.is_playing():
+        await ctx.send("No audio is currently playing.")
+        return
+
+    ctx.voice_client.pause()
+    await ctx.send("Paused audio.")
+
+@bot.command()
+async def resume(ctx):
+    if ctx.voice_client is None:
+        await ctx.send("I am not in a voice channel!")
+        return
+
+    if not ctx.voice_client.is_paused():
+        await ctx.send("Audio is not paused. You may have cancelled the audio with !stop or the audio has finished playing.")
+        return
+
+    ctx.voice_client.resume()
+    await ctx.send("Resumed audio.")
 
 # this now grabs the token from the .env file instead of publicly putting it on git.
 bot.run(os.getenv("DISCORD_TOKEN"))
