@@ -2,11 +2,14 @@ import os
 from dotenv import load_dotenv
 
 # here, we are telling the bot to use the discord.py library and the commands extension
-import discord
 # here we are telling the bot to use the commands extension from discord.py
-from discord.ext import commands
 #ffmpeg library which is used to convert audio fles to a format for a voice channel
+import discord
+from discord.ext import commands
 from discord import FFmpegPCMAudio
+
+import yt_dlp
+import asyncio
 
 # "Look for a .env file and load the variables inside it."
 load_dotenv()
@@ -63,7 +66,6 @@ async def leave(ctx):
 
 # this is for the bot to be able to play audio in a voice channel, this is done by using the FFmpeg library, which is a library that can be used to convert audio and video files. In this case, we are using it to convert an mp3 file to a format that can be played in a voice channel.
 @bot.command()
-# command would look like !play <url> where url is the url of the audio file you want to play because of play(ctx, url)
 async def play(ctx, url):
 
     if ctx.author.voice is None:
@@ -73,9 +75,32 @@ async def play(ctx, url):
     if ctx.voice_client is None:
         await ctx.author.voice.channel.connect()
 
-    await ctx.send(f"Playing audio from {url}...")
+    ydl_opts = {
+        "format": "bestaudio",
+        "noplaylist": True,
+    }
 
-    source = FFmpegPCMAudio(url)
+    await ctx.send("Finding audio...")
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = await asyncio.to_thread(
+            ydl.extract_info,
+            url,
+            download=False
+        )
+
+    title = info["title"]
+    audio_url = info["url"]
+
+    await ctx.send(f"Playing **{title}** 🎵")
+
+    # stops the audio from dropping out, attempts to retry the connection if it drops out, and sets a maximum delay for reconnecting.
+    source = FFmpegPCMAudio(
+    audio_url,
+    before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+    options="-vn"
+)
+
     ctx.voice_client.play(source)
 
 @bot.command()
@@ -112,6 +137,24 @@ async def resume(ctx):
 
     ctx.voice_client.resume()
     await ctx.send("Resumed audio.")
+
+@bot.command()
+async def testyoutube(ctx, url):
+
+    ydl_opts = {
+        "format": "bestaudio",
+        "noplaylist": True,
+    }
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = await asyncio.to_thread(
+            ydl.extract_info,
+            url,
+            download=False
+        )
+
+    await ctx.send(f"Title: {info['title']}")
+    print(info["url"])
 
 # this now grabs the token from the .env file instead of publicly putting it on git.
 bot.run(os.getenv("DISCORD_TOKEN"))
