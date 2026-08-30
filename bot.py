@@ -185,46 +185,87 @@ def build_player_embed(guild_id):
     volume_percent = get_volume_percent(guild_id)
     loop_label = get_loop_label(guild_id)
 
-    if current_track:
-        title = current_track.get("title", "Unknown title")
-        artist = current_track.get("artist") or current_track.get("uploader") or "Unknown artist"
-        duration = current_track.get("duration")
-        duration_text = format_duration(duration)
-        description = (
-            "🎶 Now Playing\n"
-            f"**{title}**\n\n"
-            f"Artist: **{artist}**\n"
-            f"Duration: **{duration_text}**"
-        )
+    # Determine playback state
+    if voice_client is None:
+        playback_state = "Disconnected"
+    elif voice_client.is_paused():
+        playback_state = "Paused"
+    elif voice_client.is_playing():
+        playback_state = "Playing"
     else:
-        description = (
-            "🎶 Now Playing\n"
-            "**Nothing is playing right now**"
-        )
+        playback_state = "Idle"
 
     embed = discord.Embed(
-        title="🎵 VYNLO                                               \n",
-        description=description,
         color=discord.Color.from_rgb(180, 98, 255),
+    )
+
+    if current_track:
+        title = current_track.get("title", "Unknown title")
+        artist = (
+            current_track.get("artist")
+            or current_track.get("uploader")
+            or "Unknown artist"
+        )
+
+        duration = current_track.get("duration")
+        duration_text = format_duration(duration)
+
+        # Main player information
+        embed.description = (
+            "🎶 ** NOW PLAYING:**\n\n"
+            f"### {title}\n\n"
+            f"**Artist: {artist}**\n"
+            f"Duration: `{duration_text}`\n\n"
+        )
+
+        # Album artwork
+        if current_track.get("thumbnail"):
+            embed.set_image(url=current_track["thumbnail"])
+
+    else:
+        embed.description = (
+            "🎶 **NOW PLAYING**\n\n"
+            "### Nothing is playing right now\n"
+            "Add a song to the queue to get started."
+        )
+
+    # Player information
+    #embed.add_field(
+    #    name="🎧 State",
+   #     value=f"**{playback_state}**",
+    #    inline=True,
+   # )
+
+    #embed.add_field(
+    #    name="📋 Queue",
+    #    value=f"**{len(queue)}** track(s)",
+    #    inline=True,
+    #)
+    next_track = queue[0] if queue else None
+
+    embed.add_field(
+        name="\u200b",
+        value="\u200b",
+        inline=False,
+    )
+
+    embed.add_field(
+        name="\u200b",
+        value="\u200b",
+        inline=False,
     )   
 
-    if current_track and current_track.get("thumbnail"):
-        embed.set_thumbnail(url=current_track["thumbnail"])
+    embed.add_field(
+        name="🔊 Queued Next:",
+        value=f"**{next_track.get('title', 'Unknown track')}**" if next_track else "**Nothing queued**",
+        inline=True,
+    )
 
-    if voice_client is not None:
-        if voice_client.is_paused():
-            playback_state = "Paused"
-        elif voice_client.is_playing():
-            playback_state = "Playing"
-        else:
-            playback_state = "Idle"
-    else:
-        playback_state = "Disconnected"
+    # Footer
+    embed.set_footer(
+        text="Vynlo • by pgdev"
+        )
 
-    embed.add_field(name="Artist", value=current_track.get("artist") or current_track.get("uploader") or "Unknown artist" if current_track else "N/A", inline=True)
-    embed.add_field(name="Queue", value=f"{len(queue)} track(s)", inline=True)
-    embed.add_field(name="State", value=playback_state, inline=True)
-    embed.set_footer(text=f"Volume: {volume_percent}% • Loop: {loop_label}")
     return embed
 
 
@@ -400,42 +441,86 @@ class QueueAddModal(discord.ui.Modal):
 class MusicPlayerView(discord.ui.View):
     def __init__(self, guild_id, channel_id=None, *, timeout=180):
         super().__init__(timeout=timeout)
+
         self.guild_id = guild_id
         self.channel_id = channel_id
 
-        self.shuffle_button = discord.ui.Button(emoji="🔀", label="\u200b", custom_id=f"player_shuffle_{guild_id}", style=discord.ButtonStyle.secondary)
-        self.shuffle_button.callback = self.shuffle_callback
-        self.shuffle_button.row = 0
-        self.add_item(self.shuffle_button)
+        # ─────────────────────────────
+        # ROW 0 — MAIN PLAYER CONTROLS
+        # ─────────────────────────────
 
-        self.previous_button = discord.ui.Button(emoji="⏮️", label="\u200b", custom_id=f"player_previous_{guild_id}", style=discord.ButtonStyle.secondary)
+        self.previous_button = discord.ui.Button(
+            emoji="⏮️",
+            label="Previous",
+            custom_id=f"player_previous_{guild_id}",
+            style=discord.ButtonStyle.secondary,
+            row=0,
+        )
         self.previous_button.callback = self.previous_callback
-        self.previous_button.row = 0
         self.add_item(self.previous_button)
 
-        self.pause_button = discord.ui.Button(emoji="⏸️", label="\u200b", custom_id=f"player_pause_{guild_id}", style=discord.ButtonStyle.primary)
+        self.pause_button = discord.ui.Button(
+            emoji="⏸️",
+            label="Pause",
+            custom_id=f"player_pause_{guild_id}",
+            style=discord.ButtonStyle.primary,
+            row=0,
+        )
         self.pause_button.callback = self.pause_resume_callback
-        self.pause_button.row = 0
         self.add_item(self.pause_button)
 
-        self.skip_button = discord.ui.Button(emoji="⏭️", label="\u200b", custom_id=f"player_skip_{guild_id}", style=discord.ButtonStyle.secondary)
+        self.skip_button = discord.ui.Button(
+            emoji="⏭️",
+            label="Skip",
+            custom_id=f"player_skip_{guild_id}",
+            style=discord.ButtonStyle.secondary,
+            row=0,
+        )
         self.skip_button.callback = self.skip_callback
-        self.skip_button.row = 0
         self.add_item(self.skip_button)
 
-        self.queue_button = discord.ui.Button(emoji="📋", label="\u200b", custom_id=f"player_queue_{guild_id}", style=discord.ButtonStyle.secondary)
-        self.queue_button.callback = self.queue_callback
-        self.queue_button.row = 0
-        self.add_item(self.queue_button)
+        # ─────────────────────────────
+        # ROW 1 — SECONDARY CONTROLS
+        # ─────────────────────────────
 
-        self.loop_button = discord.ui.Button(emoji="🔁", label="\u200b", custom_id=f"player_loop_{guild_id}", style=discord.ButtonStyle.secondary)
+        self.shuffle_button = discord.ui.Button(
+            emoji="🔀",
+            label="Shuffle",
+            custom_id=f"player_shuffle_{guild_id}",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+        self.shuffle_button.callback = self.shuffle_callback
+        self.add_item(self.shuffle_button)
+
+        self.loop_button = discord.ui.Button(
+            emoji="🔁",
+            label="Loop",
+            custom_id=f"player_loop_{guild_id}",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
         self.loop_button.callback = self.loop_callback
-        self.loop_button.row = 1
         self.add_item(self.loop_button)
 
-        self.stop_button = discord.ui.Button(emoji="⏹️", label="\u200b", custom_id=f"player_stop_{guild_id}", style=discord.ButtonStyle.danger)
+        self.queue_button = discord.ui.Button(
+            emoji="📋",
+            label="Queue",
+            custom_id=f"player_queue_{guild_id}",
+            style=discord.ButtonStyle.secondary,
+            row=1,
+        )
+        self.queue_button.callback = self.queue_callback
+        self.add_item(self.queue_button)
+
+        self.stop_button = discord.ui.Button(
+            emoji="⏹️",
+            label="Stop",
+            custom_id=f"player_stop_{guild_id}",
+            style=discord.ButtonStyle.danger,
+            row=1,
+        )
         self.stop_button.callback = self.stop_callback
-        self.stop_button.row = 1
         self.add_item(self.stop_button)
 
         self.refresh_state()
@@ -444,53 +529,119 @@ class MusicPlayerView(discord.ui.View):
         guild = bot.get_guild(self.guild_id)
         voice_client = guild.voice_client if guild else None
         state = get_player_state(self.guild_id)
+
         if voice_client is None:
             self.previous_button.disabled = True
-            self.pause_button.emoji = "⏸️"
-            self.pause_button.label = "\u200b"
+
+            self.pause_button.emoji = "▶️"
+            self.pause_button.label = "Play"
             self.pause_button.disabled = True
+
             self.skip_button.disabled = True
             self.shuffle_button.disabled = True
+
             self.loop_button.emoji = "🔁"
-            self.loop_button.label = "\u200b"
+            self.loop_button.label = "Loop"
             self.loop_button.disabled = False
+
             self.queue_button.disabled = False
             self.stop_button.disabled = True
+
             self.shuffle_button.style = discord.ButtonStyle.secondary
             self.loop_button.style = discord.ButtonStyle.secondary
+
             return
 
-        self.previous_button.disabled = not bool(state.get("history"))
-        self.pause_button.emoji = "⏸️" if voice_client.is_paused() else "▶️"
-        self.pause_button.label = "\u200b"
-        self.pause_button.disabled = not (voice_client.is_playing() or voice_client.is_paused())
-        self.pause_button.style = discord.ButtonStyle.green if voice_client.is_playing() or voice_client.is_paused() else discord.ButtonStyle.primary
-        self.skip_button.disabled = not (voice_client.is_playing() or voice_client.is_paused())
-        self.shuffle_button.disabled = len(get_server_queue(self.guild_id)) < 2
-        self.shuffle_button.style = discord.ButtonStyle.green if state.get("shuffle") else discord.ButtonStyle.secondary
+        # Previous
+        self.previous_button.disabled = not bool(
+            state.get("history")
+        )
+
+        # Pause / Resume
+        if voice_client.is_paused():
+            self.pause_button.emoji = "▶️"
+            self.pause_button.label = "Resume"
+        else:
+            self.pause_button.emoji = "⏸️"
+            self.pause_button.label = "Pause"
+
+        self.pause_button.disabled = not (
+            voice_client.is_playing()
+            or voice_client.is_paused()
+        )
+
+        self.pause_button.style = (
+            discord.ButtonStyle.success
+            if voice_client.is_playing()
+            or voice_client.is_paused()
+            else discord.ButtonStyle.primary
+        )
+
+        # Skip
+        self.skip_button.disabled = not (
+            voice_client.is_playing()
+            or voice_client.is_paused()
+        )
+
+        # Shuffle
+        self.shuffle_button.disabled = (
+            len(get_server_queue(self.guild_id)) < 2
+        )
+
+        if state.get("shuffle"):
+            self.shuffle_button.style = discord.ButtonStyle.success
+            self.shuffle_button.label = "Shuffle On"
+        else:
+            self.shuffle_button.style = discord.ButtonStyle.secondary
+            self.shuffle_button.label = "Shuffle"
+
+        # Loop
         self.loop_button.emoji = "🔁"
-        self.loop_button.label = "\u200b"
-        self.loop_button.style = discord.ButtonStyle.green if state.get("loop") != "off" else discord.ButtonStyle.secondary
+
+        if state.get("loop") != "off":
+            self.loop_button.style = discord.ButtonStyle.success
+            self.loop_button.label = "Loop On"
+        else:
+            self.loop_button.style = discord.ButtonStyle.secondary
+            self.loop_button.label = "Loop"
+
         self.loop_button.disabled = False
+
+        # Queue
         self.queue_button.disabled = False
+
+        # Stop
         self.stop_button.disabled = False
 
     async def _ensure_voice_control(self, interaction):
         if interaction.guild is None:
-            await interaction.response.send_message("This panel can only be used in a server voice channel.", ephemeral=True)
+            await interaction.response.send_message(
+                "This panel can only be used in a server voice channel.",
+                ephemeral=True
+            )
             return False
 
         voice_client = interaction.guild.voice_client
+
         if voice_client is None:
-            await interaction.response.send_message("Vynlo is not connected to a voice channel.", ephemeral=True)
+            await interaction.response.send_message(
+                "Vynlo is not connected to a voice channel.",
+                ephemeral=True
+            )
             return False
 
         if interaction.user.voice is None:
-            await interaction.response.send_message("You need to be in a voice channel to control Vynlo.", ephemeral=True)
+            await interaction.response.send_message(
+                "You need to be in a voice channel to control Vynlo.",
+                ephemeral=True
+            )
             return False
 
         if interaction.user.voice.channel != voice_client.channel:
-            await interaction.response.send_message("You need to be in the same voice channel as Vynlo.", ephemeral=True)
+            await interaction.response.send_message(
+                "You need to be in the same voice channel as Vynlo.",
+                ephemeral=True
+            )
             return False
 
         return True
@@ -500,54 +651,94 @@ class MusicPlayerView(discord.ui.View):
             return
 
         voice_client = interaction.guild.voice_client
+
         if voice_client.is_paused():
             voice_client.resume()
+
         elif voice_client.is_playing():
             voice_client.pause()
+
         else:
-            await interaction.response.send_message("There is no audio to pause or resume.", ephemeral=True)
+            await interaction.response.send_message(
+                "There is no audio to pause or resume.",
+                ephemeral=True
+            )
             return
 
         await interaction.response.defer()
-        await update_player_panel(interaction.guild.id, interaction.channel.id)
+        await update_player_panel(
+            interaction.guild.id,
+            interaction.channel.id
+        )
 
     async def previous_callback(self, interaction):
         if not await self._ensure_voice_control(interaction):
             return
 
-        history = get_player_state(interaction.guild.id).get("history", [])
+        history = get_player_state(
+            interaction.guild.id
+        ).get("history", [])
+
         if not history:
-            await interaction.response.send_message("There is no previous track in history.", ephemeral=True)
+            await interaction.response.send_message(
+                "There is no previous track in history.",
+                ephemeral=True
+            )
             return
 
         previous_track = history.pop()
+
         queue = get_server_queue(interaction.guild.id)
         queue.insert(0, previous_track)
+
         interaction.guild.voice_client.stop()
+
         await interaction.response.defer()
-        await update_player_panel(interaction.guild.id, interaction.channel.id)
+
+        await update_player_panel(
+            interaction.guild.id,
+            interaction.channel.id
+        )
 
     async def skip_callback(self, interaction):
         if not await self._ensure_voice_control(interaction):
             return
 
         voice_client = interaction.guild.voice_client
-        if not (voice_client.is_playing() or voice_client.is_paused()):
-            await interaction.response.send_message("There is nothing playing to skip.", ephemeral=True)
+
+        if not (
+            voice_client.is_playing()
+            or voice_client.is_paused()
+        ):
+            await interaction.response.send_message(
+                "There is nothing playing to skip.",
+                ephemeral=True
+            )
             return
 
         voice_client.stop()
+
         await interaction.response.defer()
-        await update_player_panel(interaction.guild.id, interaction.channel.id)
+
+        await update_player_panel(
+            interaction.guild.id,
+            interaction.channel.id
+        )
 
     async def stop_callback(self, interaction):
         if not await self._ensure_voice_control(interaction):
             return
 
         get_server_queue(interaction.guild.id).clear()
+
         interaction.guild.voice_client.stop()
+
         await interaction.response.defer()
-        await update_player_panel(interaction.guild.id, interaction.channel.id)
+
+        await update_player_panel(
+            interaction.guild.id,
+            interaction.channel.id
+        )
 
     async def shuffle_callback(self, interaction):
         if not await self._ensure_voice_control(interaction):
@@ -555,36 +746,56 @@ class MusicPlayerView(discord.ui.View):
 
         state = get_player_state(interaction.guild.id)
         queue = get_server_queue(interaction.guild.id)
+
         if len(queue) < 2:
-            await interaction.response.send_message("There are not enough tracks to shuffle.", ephemeral=True)
+            await interaction.response.send_message(
+                "There are not enough tracks to shuffle.",
+                ephemeral=True
+            )
             return
 
         if state.get("shuffle"):
             original_order = state.get("original_queue")
+
             if original_order:
                 queue[:] = original_order
                 state["shuffle"] = False
                 state["original_queue"] = None
             else:
                 state["shuffle"] = False
+
         else:
             state["original_queue"] = list(queue)
             random.shuffle(queue)
             state["shuffle"] = True
 
         await interaction.response.defer()
-        await update_player_panel(interaction.guild.id, interaction.channel.id)
+
+        await update_player_panel(
+            interaction.guild.id,
+            interaction.channel.id
+        )
 
     async def loop_callback(self, interaction):
         if not await self._ensure_voice_control(interaction):
             return
 
         cycle_loop_mode(interaction.guild.id)
+
         await interaction.response.defer()
-        await update_player_panel(interaction.guild.id, interaction.channel.id)
+
+        await update_player_panel(
+            interaction.guild.id,
+            interaction.channel.id
+        )
 
     async def queue_callback(self, interaction):
-        await interaction.response.send_modal(QueueAddModal(interaction.guild.id, interaction.channel.id))
+        await interaction.response.send_modal(
+            QueueAddModal(
+                interaction.guild.id,
+                interaction.channel.id
+            )
+        )
 
 
 def is_playlist_url(url):
