@@ -121,7 +121,7 @@ def get_pause_resume_label(voice_client):
     return "Pause"
 
 
-async def send_temporary_message(ctx, message, *, delete_after=5):
+async def send_temporary_message(ctx, message, *, delete_after=10):
     await ctx.send(message, delete_after=delete_after)
 
 
@@ -806,7 +806,7 @@ async def play_next_in_queue(ctx):
             asyncio.run_coroutine_threadsafe(play_next_in_queue(ctx), bot.loop)
 
     ctx.voice_client.play(source, after=after_play)
-    await ctx.send(f"Playing **{title}** 🎵")
+    await send_temporary_message(ctx, f"Playing **{title}** 🎵")
     if getattr(ctx, "channel", None) is not None:
         await update_player_panel(ctx.guild.id, ctx.channel.id)
 
@@ -974,6 +974,7 @@ async def play(ctx, url):
             asyncio.run_coroutine_threadsafe(play_next_in_queue(ctx), bot.loop)
 
     ctx.voice_client.play(source, after=after_play)
+    await update_player_panel(ctx.guild.id, ctx.channel.id)
 
 
 @bot.command()
