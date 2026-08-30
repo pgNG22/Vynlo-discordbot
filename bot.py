@@ -411,6 +411,9 @@ class QueueAddModal(discord.ui.Modal):
             "source_url": info.get("webpage_url") or info.get("url") or url,
             "url": info.get("webpage_url") or info.get("url") or url,
             "stream_url": info.get("url") or url,
+            "artist": info.get("artist") or info.get("uploader"),
+            "duration": info.get("duration"),
+            "thumbnail": info.get("thumbnail"),
         }
 
         if interaction.guild.voice_client.is_playing() or interaction.guild.voice_client.is_paused() or guild_queue:
@@ -1159,6 +1162,9 @@ async def play(ctx, url):
         "source_url": info.get("webpage_url") or info.get("url") or url,
         "url": info.get("webpage_url") or info.get("url") or url,
         "stream_url": info.get("url") or url,
+        "artist": info.get("artist") or info.get("uploader"),
+        "duration": info.get("duration"),
+        "thumbnail": info.get("thumbnail"),
     }
 
     if ctx.voice_client.is_playing() or ctx.voice_client.is_paused() or guild_queue:
