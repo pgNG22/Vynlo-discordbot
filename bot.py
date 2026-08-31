@@ -268,35 +268,60 @@ def build_player_embed(guild_id):
 
     return embed
 
-
-async def create_or_update_player_panel(ctx):
-    guild_id = ctx.guild.id
-    channel_id = ctx.channel.id
+async def create_or_update_player_panel(guild, channel):
+    guild_id = guild.id
+    channel_id = channel.id
     key = (guild_id, channel_id)
-
-    guild = bot.get_guild(guild_id)
-    if guild is None:
-        return
-
-    channel = guild.get_channel(channel_id)
-    if channel is None:
-        return
 
     embed = build_player_embed(guild_id)
     view = MusicPlayerView(guild_id, channel_id)
 
+    # If we already know about the player message,
+    # try to update it.
     existing_message_id = player_panels.get(key)
+
     if existing_message_id:
         try:
             message = await channel.fetch_message(existing_message_id)
             await message.edit(embed=embed, view=view)
             return message
+
         except discord.NotFound:
             player_panels.pop(key, None)
 
-    message = await channel.send(embed=embed, view=view)
+    # If we don't know the message ID, look through recent
+    # messages to see if Vynlo already has a player message.
+    try:
+        async for message in channel.history(limit=50):
+            if message.author == bot.user and message.embeds:
+                embed = message.embeds[0]
+
+                if embed.description and (
+                    "NOW PLAYING" in embed.description
+                    or "Nothing is playing right now" in embed.description
+                ):
+                    player_panels[key] = message.id
+
+                    await message.edit(
+                        embed=build_player_embed(guild_id),
+                        view=MusicPlayerView(guild_id, channel_id)
+                    )
+
+                    return message
+
+    except discord.Forbidden:
+        print(f"Vynlo does not have permission to read {channel.name}")
+
+    # No existing player found, so create one.
+    message = await channel.send(
+        embed=build_player_embed(guild_id),
+        view=MusicPlayerView(guild_id, channel_id)
+    )
+
     player_panels[key] = message.id
+
     return message
+
 
 
 async def update_player_panel(guild_id, channel_id=None):
@@ -332,8 +357,8 @@ async def update_player_panel(guild_id, channel_id=None):
     view = MusicPlayerView(guild_id, channel_id)
     try:
         await message.edit(embed=build_player_embed(guild_id), view=view)
-    except discord.HTTPException:
-        pass
+    except discord.HTTPException as e:
+        print(f"Player panel update failed: {e}")
 
 
 class QueueAddModal(discord.ui.Modal):
@@ -440,9 +465,91 @@ class QueueAddModal(discord.ui.Modal):
         await interaction.response.send_message(f"Playing **{track['title']}** 🎵", ephemeral=True)
         await update_player_panel(interaction.guild.id, interaction.channel.id)
 
+def build_queue_embed(guild_id):
+    queue = get_server_queue(guild_id)
+
+    embed = discord.Embed(
+        title="📋 VYNLO QUEUE",
+        color=discord.Color.from_rgb(180, 98, 255)
+    )
+
+    if not queue:
+        embed.description = (
+            "### Queue is empty\n\n"
+            "Add a song or playlist to get started."
+        )
+        embed.set_footer(text="0 tracks queued")
+        return embed
+
+    visible_queue = queue[:10]
+    lines = []
+
+    for index, item in enumerate(visible_queue, start=1):
+        title = (
+            item.get("title", "Unknown title")
+            if isinstance(item, dict)
+            else str(item)
+        )
+
+        lines.append(f"**{index}.** {title}")
+
+    if len(queue) > len(visible_queue):
+        lines.append(
+            f"\n*...and {len(queue) - len(visible_queue)} more*"
+        )
+
+    embed.description = "\n".join(lines)
+    embed.set_footer(text=f"{len(queue)} tracks queued")
+
+    return embed
+
+
+class QueueView(discord.ui.View):
+    def __init__(self, guild_id, channel_id=None, *, timeout=None):
+        super().__init__(timeout=timeout)
+
+        self.guild_id = guild_id
+        self.channel_id = channel_id
+
+        self.add_button = discord.ui.Button(
+            label="Add to Queue",
+            emoji="➕",
+            style=discord.ButtonStyle.primary,
+            row=0
+        )
+
+        self.back_button = discord.ui.Button(
+            label="Back to Player",
+            emoji="🔙",
+            style=discord.ButtonStyle.secondary,
+            row=0
+        )
+
+        self.add_button.callback = self.add_to_queue_callback
+        self.back_button.callback = self.back_to_player_callback
+
+        self.add_item(self.add_button)
+        self.add_item(self.back_button)
+
+    async def add_to_queue_callback(self, interaction):
+        await interaction.response.send_modal(
+            QueueAddModal(
+                self.guild_id,
+                self.channel_id
+            )
+        )
+
+    async def back_to_player_callback(self, interaction):
+        await interaction.response.edit_message(
+            embed=build_player_embed(self.guild_id),
+            view=MusicPlayerView(
+                self.guild_id,
+                self.channel_id
+            )
+        )
 
 class MusicPlayerView(discord.ui.View):
-    def __init__(self, guild_id, channel_id=None, *, timeout=180):
+    def __init__(self, guild_id, channel_id=None, *, timeout=None):
         super().__init__(timeout=timeout)
 
         self.guild_id = guild_id
@@ -616,44 +723,38 @@ class MusicPlayerView(discord.ui.View):
         # Stop
         self.stop_button.disabled = False
 
-    async def _ensure_voice_control(self, interaction):
+    async def pause_resume_callback(self, interaction):
+        await interaction.response.defer()
+
         if interaction.guild is None:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "This panel can only be used in a server voice channel.",
                 ephemeral=True
             )
-            return False
+            return
 
         voice_client = interaction.guild.voice_client
 
         if voice_client is None:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "Vynlo is not connected to a voice channel.",
                 ephemeral=True
             )
-            return False
+            return
 
         if interaction.user.voice is None:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "You need to be in a voice channel to control Vynlo.",
                 ephemeral=True
             )
-            return False
+            return
 
         if interaction.user.voice.channel != voice_client.channel:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "You need to be in the same voice channel as Vynlo.",
                 ephemeral=True
             )
-            return False
-
-        return True
-
-    async def pause_resume_callback(self, interaction):
-        if not await self._ensure_voice_control(interaction):
             return
-
-        voice_client = interaction.guild.voice_client
 
         if voice_client.is_paused():
             voice_client.resume()
@@ -662,20 +763,48 @@ class MusicPlayerView(discord.ui.View):
             voice_client.pause()
 
         else:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "There is no audio to pause or resume.",
                 ephemeral=True
             )
             return
 
-        await interaction.response.defer()
         await update_player_panel(
             interaction.guild.id,
             interaction.channel.id
         )
 
     async def previous_callback(self, interaction):
-        if not await self._ensure_voice_control(interaction):
+        await interaction.response.defer()
+
+        if interaction.guild is None:
+            await interaction.followup.send(
+                "This panel can only be used in a server voice channel.",
+                ephemeral=True
+            )
+            return
+
+        voice_client = interaction.guild.voice_client
+
+        if voice_client is None:
+            await interaction.followup.send(
+                "Vynlo is not connected to a voice channel.",
+                ephemeral=True
+            )
+            return
+
+        if interaction.user.voice is None:
+            await interaction.followup.send(
+                "You need to be in a voice channel to control Vynlo.",
+                ephemeral=True
+            )
+            return
+
+        if interaction.user.voice.channel != voice_client.channel:
+            await interaction.followup.send(
+                "You need to be in the same voice channel as Vynlo.",
+                ephemeral=True
+            )
             return
 
         history = get_player_state(
@@ -683,7 +812,7 @@ class MusicPlayerView(discord.ui.View):
         ).get("history", [])
 
         if not history:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "There is no previous track in history.",
                 ephemeral=True
             )
@@ -694,9 +823,7 @@ class MusicPlayerView(discord.ui.View):
         queue = get_server_queue(interaction.guild.id)
         queue.insert(0, previous_track)
 
-        interaction.guild.voice_client.stop()
-
-        await interaction.response.defer()
+        voice_client.stop()
 
         await update_player_panel(
             interaction.guild.id,
@@ -704,16 +831,43 @@ class MusicPlayerView(discord.ui.View):
         )
 
     async def skip_callback(self, interaction):
-        if not await self._ensure_voice_control(interaction):
+        await interaction.response.defer()
+
+        if interaction.guild is None:
+            await interaction.followup.send(
+                "This panel can only be used in a server voice channel.",
+                ephemeral=True
+            )
             return
 
         voice_client = interaction.guild.voice_client
+
+        if voice_client is None:
+            await interaction.followup.send(
+                "Vynlo is not connected to a voice channel.",
+                ephemeral=True
+            )
+            return
+
+        if interaction.user.voice is None:
+            await interaction.followup.send(
+                "You need to be in a voice channel to control Vynlo.",
+                ephemeral=True
+            )
+            return
+
+        if interaction.user.voice.channel != voice_client.channel:
+            await interaction.followup.send(
+                "You need to be in the same voice channel as Vynlo.",
+                ephemeral=True
+            )
+            return
 
         if not (
             voice_client.is_playing()
             or voice_client.is_paused()
         ):
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "There is nothing playing to skip.",
                 ephemeral=True
             )
@@ -721,22 +875,48 @@ class MusicPlayerView(discord.ui.View):
 
         voice_client.stop()
 
-        await interaction.response.defer()
-
         await update_player_panel(
             interaction.guild.id,
             interaction.channel.id
         )
 
     async def stop_callback(self, interaction):
-        if not await self._ensure_voice_control(interaction):
+        await interaction.response.defer()
+
+        if interaction.guild is None:
+            await interaction.followup.send(
+                "This panel can only be used in a server voice channel.",
+                ephemeral=True
+            )
+            return
+
+        voice_client = interaction.guild.voice_client
+
+        if voice_client is None:
+            await interaction.followup.send(
+                "Vynlo is not connected to a voice channel.",
+                ephemeral=True
+            )
+            return
+
+        if interaction.user.voice is None:
+            await interaction.followup.send(
+                "You need to be in a voice channel to control Vynlo.",
+                ephemeral=True
+            )
+            return
+
+        if interaction.user.voice.channel != voice_client.channel:
+            await interaction.followup.send(
+                "You need to be in the same voice channel as Vynlo.",
+                ephemeral=True
+            )
             return
 
         get_server_queue(interaction.guild.id).clear()
+        get_player_state(interaction.guild.id)["current_track"] = None
 
-        interaction.guild.voice_client.stop()
-
-        await interaction.response.defer()
+        voice_client.stop()
 
         await update_player_panel(
             interaction.guild.id,
@@ -744,14 +924,43 @@ class MusicPlayerView(discord.ui.View):
         )
 
     async def shuffle_callback(self, interaction):
-        if not await self._ensure_voice_control(interaction):
+        await interaction.response.defer()
+
+        if interaction.guild is None:
+            await interaction.followup.send(
+                "This panel can only be used in a server voice channel.",
+                ephemeral=True
+            )
+            return
+
+        voice_client = interaction.guild.voice_client
+
+        if voice_client is None:
+            await interaction.followup.send(
+                "Vynlo is not connected to a voice channel.",
+                ephemeral=True
+            )
+            return
+
+        if interaction.user.voice is None:
+            await interaction.followup.send(
+                "You need to be in a voice channel to control Vynlo.",
+                ephemeral=True
+            )
+            return
+
+        if interaction.user.voice.channel != voice_client.channel:
+            await interaction.followup.send(
+                "You need to be in the same voice channel as Vynlo.",
+                ephemeral=True
+            )
             return
 
         state = get_player_state(interaction.guild.id)
         queue = get_server_queue(interaction.guild.id)
 
         if len(queue) < 2:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "There are not enough tracks to shuffle.",
                 ephemeral=True
             )
@@ -772,20 +981,45 @@ class MusicPlayerView(discord.ui.View):
             random.shuffle(queue)
             state["shuffle"] = True
 
-        await interaction.response.defer()
-
         await update_player_panel(
             interaction.guild.id,
             interaction.channel.id
         )
 
     async def loop_callback(self, interaction):
-        if not await self._ensure_voice_control(interaction):
+        await interaction.response.defer()
+
+        if interaction.guild is None:
+            await interaction.followup.send(
+                "This panel can only be used in a server voice channel.",
+                ephemeral=True
+            )
+            return
+
+        voice_client = interaction.guild.voice_client
+
+        if voice_client is None:
+            await interaction.followup.send(
+                "Vynlo is not connected to a voice channel.",
+                ephemeral=True
+            )
+            return
+
+        if interaction.user.voice is None:
+            await interaction.followup.send(
+                "You need to be in a voice channel to control Vynlo.",
+                ephemeral=True
+            )
+            return
+
+        if interaction.user.voice.channel != voice_client.channel:
+            await interaction.followup.send(
+                "You need to be in the same voice channel as Vynlo.",
+                ephemeral=True
+            )
             return
 
         cycle_loop_mode(interaction.guild.id)
-
-        await interaction.response.defer()
 
         await update_player_panel(
             interaction.guild.id,
@@ -793,8 +1027,9 @@ class MusicPlayerView(discord.ui.View):
         )
 
     async def queue_callback(self, interaction):
-        await interaction.response.send_modal(
-            QueueAddModal(
+        await interaction.response.edit_message(
+            embed=build_queue_embed(interaction.guild.id),
+            view=QueueView(
                 interaction.guild.id,
                 interaction.channel.id
             )
@@ -983,9 +1218,17 @@ async def resolve_track_audio(track):
 
 async def play_next_in_queue(ctx):
     guild_queue = queues.get(ctx.guild.id, [])
+
     if not guild_queue:
         state = get_player_state(ctx.guild.id)
         state["current_track"] = None
+
+        if getattr(ctx, "channel", None) is not None:
+            await update_player_panel(
+                ctx.guild.id,
+                ctx.channel.id
+            )
+
         return
 
     current_state = get_player_state(ctx.guild.id)
@@ -1024,11 +1267,42 @@ async def play_next_in_queue(ctx):
     if getattr(ctx, "channel", None) is not None:
         await update_player_panel(ctx.guild.id, ctx.channel.id)
 
+async def setup_vynlo_channel(guild):
+    channel_name = "VynloMusic🎵"
+
+    print(f"\nChecking channels in {guild.name}...")
+
+    for channel in guild.channels:
+        print(f"Found channel: '{channel.name}' | Type: {type(channel).__name__}")
+
+        if isinstance(channel, discord.TextChannel):
+            if channel.name.lower() == channel_name.lower():
+                print(f"✅ FOUND EXISTING VYNLO CHANNEL: {channel.id}")
+                return channel
+
+    print("❌ No VynloMusic-Player found. Creating one...")
+
+    channel = await guild.create_text_channel(
+        channel_name,
+        topic="🎵 Your Vynlo Music Player"
+    )
+
+    print(f"✅ Created VynloMusic: {channel.id}")
+
+    return channel
+
 
 # this is an event that is triggered when the bot is ready to start working, he will print the bot's username in the console
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
+
+    for guild in bot.guilds:
+        channel = await setup_vynlo_channel(guild)
+
+        if channel:
+            await create_or_update_player_panel(guild, channel)
+
 
 # here we are adding another ! command, this one would be !join
 @bot.command()
@@ -1041,7 +1315,8 @@ async def join(ctx):
     channel = ctx.author.voice.channel
     # then we are telling the bot to connect to the voice channel that the user is in. This is done by using the connect() method from the discord.py library. This method is asynchronous, so we need to use the await keyword before it.
     await channel.connect()
-    await create_or_update_player_panel(ctx)
+    player_channel = await setup_vynlo_channel(ctx.guild)
+    await create_or_update_player_panel(ctx.guild, player_channel)
     await send_temporary_message(
         ctx,
         f"✅ Joined {channel}!\n\n"
@@ -1060,7 +1335,8 @@ async def join(ctx):
 
 @bot.command()
 async def panel(ctx):
-    await create_or_update_player_panel(ctx)
+    player_channel = await setup_vynlo_channel(ctx.guild)
+    await create_or_update_player_panel(ctx.guild, player_channel)
     await send_temporary_message(ctx, "🎵 Player panel ready. Use the buttons below to control the music.")
 
 
