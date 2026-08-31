@@ -1,6 +1,6 @@
-﻿# Vynlo 🎵
+# Vynlo 🎵
 
-<img align="right" width="140" height="140" alt="Vynlo Logo" src="https://github.com/user-attachments/assets/3d72a50f-9a27-447d-9688-9e63cab89a5b">   
+<img align="right" width="175" height="175" alt="Vynlo Logo" src="https://github.com/user-attachments/assets/7e63181b-9652-4cf1-8602-090ac219fd5f">   
 
 A Discord music bot built with Python and `discord.py`.
 
