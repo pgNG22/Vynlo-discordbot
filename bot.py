@@ -51,12 +51,14 @@ def get_player_state(guild_id):
         "shuffle": False,
         "history": [],
         "current_track": None,
+        "skip_requested": False,
     })
     state.setdefault("volume", 100)
     state.setdefault("loop", "off")
     state.setdefault("shuffle", False)
     state.setdefault("history", [])
     state.setdefault("current_track", None)
+    state.setdefault("skip_requested", False)
     return state
 
 
@@ -156,7 +158,7 @@ def build_queue_embed(guild_id):
         description="━━━━━━━━━━━━━━━━━━━━",
         color=discord.Color.from_rgb(160, 120, 255),
     )
-    embed.set_author(name="VYNLO", icon_url="https://images.unsplash.com/photo-1516280440614-37939bbacd81?auto=format&fit=crop&w=80&q=80")
+    embed.set_author(name="VYNLO")
 
     if not queue:
         embed.description = "The queue is empty."
@@ -361,11 +363,13 @@ async def update_player_panel(guild_id, channel_id=None):
         print(f"Player panel update failed: {e}")
 
 
+
 class QueueAddModal(discord.ui.Modal):
     def __init__(self, guild_id, channel_id=None):
         super().__init__(title="Add to Queue")
         self.guild_id = guild_id
         self.channel_id = channel_id
+
         self.url_input = discord.ui.TextInput(
             label="Song or playlist URL",
             placeholder="Paste a YouTube link...",
@@ -373,44 +377,96 @@ class QueueAddModal(discord.ui.Modal):
             style=discord.TextStyle.short,
             max_length=500,
         )
+
         self.add_item(self.url_input)
 
     async def on_submit(self, interaction):
+        # Acknowledge the interaction immediately.
+        # This prevents Discord's 3-second interaction timeout.
+        await interaction.response.defer(ephemeral=True)
+
         url = (self.url_input.value or "").strip()
+
         if not url:
-            await interaction.response.send_message("Please enter a valid URL.", ephemeral=True)
+            await interaction.followup.send(
+                "Please enter a valid URL.",
+                ephemeral=True
+            )
             return
 
         if interaction.user.voice is None:
-            await interaction.response.send_message("You need to be in a voice channel to add music.", ephemeral=True)
+            await interaction.followup.send(
+                "You need to be in a voice channel to add music.",
+                ephemeral=True
+            )
             return
 
+        # Connect to the user's voice channel if needed
         if interaction.guild.voice_client is None:
             await interaction.user.voice.channel.connect()
 
         guild_queue = get_server_queue(interaction.guild.id)
 
         try:
+            # ---------------------------------------------------------
+            # PLAYLIST
+            # ---------------------------------------------------------
             if is_playlist_url(url):
                 tracks = await extract_playlist_tracks(url)
+
                 if not tracks:
-                    await interaction.response.send_message("I could not find any playable tracks in that playlist.", ephemeral=True)
+                    await interaction.followup.send(
+                        "I could not find any playable tracks in that playlist.",
+                        ephemeral=True
+                    )
                     return
 
-                if interaction.guild.voice_client.is_playing() or interaction.guild.voice_client.is_paused() or guild_queue:
+                voice_client = interaction.guild.voice_client
+
+                # If something is already playing/paused, or there is
+                # already something in the queue, add everything.
+                if (
+                    voice_client.is_playing()
+                    or voice_client.is_paused()
+                    or guild_queue
+                ):
                     guild_queue.extend(tracks)
-                    await interaction.response.send_message(f"Added **{len(tracks)} tracks** from the playlist to the queue.", ephemeral=True)
-                    await update_player_panel(interaction.guild.id, interaction.channel.id)
+
+                    await interaction.followup.send(
+                        f"Added **{len(tracks)} tracks** from the playlist to the queue.",
+                        ephemeral=True
+                    )
+
+                    await update_player_panel(
+                        interaction.guild.id,
+                        interaction.channel.id
+                    )
+
                     return
 
+                # Nothing is playing, so the first playlist track starts now.
                 first_track = await resolve_track_audio(tracks[0])
-                if len(tracks) > 1:
-                    guild_queue.extend([await resolve_track_audio(track) for track in tracks[1:]])
 
-                get_player_state(interaction.guild.id)["current_track"] = first_track
+                # Resolve and queue the remaining tracks.
+                if len(tracks) > 1:
+                    guild_queue.extend(
+                        [
+                            await resolve_track_audio(track)
+                            for track in tracks[1:]
+                        ]
+                    )
+
+                get_player_state(
+                    interaction.guild.id
+                )["current_track"] = first_track
+
                 source = FFmpegPCMAudio(
                     first_track["stream_url"],
-                    before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+                    before_options=(
+                        "-reconnect 1 "
+                        "-reconnect_streamed 1 "
+                        "-reconnect_delay_max 5"
+                    ),
                     options="-vn",
                 )
 
@@ -418,19 +474,43 @@ class QueueAddModal(discord.ui.Modal):
                     if error:
                         print(f"Playback error: {error}")
                         return
-                    if interaction.guild.id in queues and queues[interaction.guild.id]:
-                        asyncio.run_coroutine_threadsafe(play_next_in_queue(interaction), bot.loop)
 
-                interaction.guild.voice_client.play(source, after=after_play)
-                await interaction.response.send_message(f"Playing **{first_track['title']}** 🎵", ephemeral=True)
-                await update_player_panel(interaction.guild.id, interaction.channel.id)
+                    asyncio.run_coroutine_threadsafe(
+                        play_next_in_queue(
+                            interaction.guild.id,
+                            interaction.channel
+                        ),
+                        bot.loop
+                    )
+
+                voice_client.play(
+                    source,
+                    after=after_play
+                )
+
+                await update_player_panel(
+                    interaction.guild.id,
+                    interaction.channel.id
+                )
+
                 return
 
+            # ---------------------------------------------------------
+            # SINGLE TRACK
+            # ---------------------------------------------------------
             info = await extract_audio_info(url)
-        except Exception:
-            await interaction.response.send_message("I could not find audio for that URL. Please try another one.", ephemeral=True)
+
+        except Exception as e:
+            print(f"QueueAddModal error: {e}")
+
+            await interaction.followup.send(
+                "I could not find audio for that URL. Please try another one.",
+                ephemeral=True
+            )
+
             return
 
+        # Build track object
         track = {
             "title": info.get("title", "Unknown title"),
             "source_url": info.get("webpage_url") or info.get("url") or url,
@@ -441,16 +521,39 @@ class QueueAddModal(discord.ui.Modal):
             "thumbnail": info.get("thumbnail"),
         }
 
-        if interaction.guild.voice_client.is_playing() or interaction.guild.voice_client.is_paused() or guild_queue:
+        voice_client = interaction.guild.voice_client
+
+        # -------------------------------------------------------------
+        # ADD TO EXISTING QUEUE
+        # -------------------------------------------------------------
+        if (
+            voice_client.is_playing()
+            or voice_client.is_paused()
+            or guild_queue
+        ):
             guild_queue.append(track)
-            await interaction.response.send_message(f"Added **{track['title']}** to the queue.", ephemeral=True)
-            await update_player_panel(interaction.guild.id, interaction.channel.id)
+
+            await update_player_panel(
+                interaction.guild.id,
+                interaction.channel.id
+            )
+
             return
 
-        get_player_state(interaction.guild.id)["current_track"] = track
+        # -------------------------------------------------------------
+        # START PLAYING IMMEDIATELY
+        # -------------------------------------------------------------
+        get_player_state(
+            interaction.guild.id
+        )["current_track"] = track
+
         source = FFmpegPCMAudio(
             track["stream_url"],
-            before_options="-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+            before_options=(
+                "-reconnect 1 "
+                "-reconnect_streamed 1 "
+                "-reconnect_delay_max 5"
+            ),
             options="-vn",
         )
 
@@ -458,50 +561,25 @@ class QueueAddModal(discord.ui.Modal):
             if error:
                 print(f"Playback error: {error}")
                 return
-            if interaction.guild.id in queues and queues[interaction.guild.id]:
-                asyncio.run_coroutine_threadsafe(play_next_in_queue(interaction), bot.loop)
 
-        interaction.guild.voice_client.play(source, after=after_play)
-        await interaction.response.send_message(f"Playing **{track['title']}** 🎵", ephemeral=True)
-        await update_player_panel(interaction.guild.id, interaction.channel.id)
+            asyncio.run_coroutine_threadsafe(
+                play_next_in_queue(
+                    interaction.guild.id,
+                    interaction.channel
+                ),
+                bot.loop
+            )
 
-def build_queue_embed(guild_id):
-    queue = get_server_queue(guild_id)
-
-    embed = discord.Embed(
-        title="📋 VYNLO QUEUE",
-        color=discord.Color.from_rgb(180, 98, 255)
-    )
-
-    if not queue:
-        embed.description = (
-            "### Queue is empty\n\n"
-            "Add a song or playlist to get started."
-        )
-        embed.set_footer(text="0 tracks queued")
-        return embed
-
-    visible_queue = queue[:10]
-    lines = []
-
-    for index, item in enumerate(visible_queue, start=1):
-        title = (
-            item.get("title", "Unknown title")
-            if isinstance(item, dict)
-            else str(item)
+        voice_client.play(
+            source,
+            after=after_play
         )
 
-        lines.append(f"**{index}.** {title}")
-
-    if len(queue) > len(visible_queue):
-        lines.append(
-            f"\n*...and {len(queue) - len(visible_queue)} more*"
+        await update_player_panel(
+            interaction.guild.id,
+            interaction.channel.id
         )
 
-    embed.description = "\n".join(lines)
-    embed.set_footer(text=f"{len(queue)} tracks queued")
-
-    return embed
 
 
 class QueueView(discord.ui.View):
@@ -830,6 +908,7 @@ class MusicPlayerView(discord.ui.View):
             interaction.channel.id
         )
 
+
     async def skip_callback(self, interaction):
         await interaction.response.defer()
 
@@ -873,12 +952,24 @@ class MusicPlayerView(discord.ui.View):
             )
             return
 
+        guild_id = interaction.guild.id
+
+        state = get_player_state(guild_id)
+        state["skip_requested"] = True
+
+        # Stop the current track.
+        # This triggers the after_play() callback.
         voice_client.stop()
 
+        # Give Discord/FFmpeg a moment to finish stopping.
+        await asyncio.sleep(0.15)
+
         await update_player_panel(
-            interaction.guild.id,
+            guild_id,
             interaction.channel.id
         )
+
+
 
     async def stop_callback(self, interaction):
         await interaction.response.defer()
@@ -1216,37 +1307,93 @@ async def resolve_track_audio(track):
     return track
 
 
-async def play_next_in_queue(ctx):
-    guild_queue = queues.get(ctx.guild.id, [])
+async def play_next_in_queue(guild_id, channel):
+    guild = bot.get_guild(guild_id)
 
+    if guild is None:
+        print(f"❌ Could not find guild {guild_id}")
+        return
+
+    voice_client = guild.voice_client
+    guild_queue = queues.get(guild_id, [])
+    state = get_player_state(guild_id)
+
+    # Store the track that just finished/skipped in history
+    current_track = state.get("current_track")
+
+    if current_track and isinstance(current_track, dict):
+        state.setdefault("history", []).append(current_track)
+
+    # Nothing left in the queue
     if not guild_queue:
-        state = get_player_state(ctx.guild.id)
         state["current_track"] = None
+        state["skip_requested"] = False
 
-        if getattr(ctx, "channel", None) is not None:
+        await update_player_panel(
+            guild_id,
+            channel.id if channel else None
+        )
+
+        return
+
+    # Make sure Vynlo is still connected
+    if voice_client is None:
+        print("❌ Vynlo is no longer connected to a voice channel.")
+        state["current_track"] = None
+        state["skip_requested"] = False
+        return
+
+    # Get the next track
+    next_track = guild_queue.pop(0)
+
+    try:
+        next_track = await resolve_track_audio(next_track)
+
+    except Exception as e:
+        print(f"❌ Failed to resolve next track: {e}")
+
+        state["current_track"] = None
+        state["skip_requested"] = False
+
+        # Try the following track instead
+        if guild_queue:
+            await play_next_in_queue(guild_id, channel)
+        else:
             await update_player_panel(
-                ctx.guild.id,
-                ctx.channel.id
+                guild_id,
+                channel.id if channel else None
             )
 
         return
 
-    current_state = get_player_state(ctx.guild.id)
-    current_track = current_state.get("current_track")
-    if current_track and isinstance(current_track, dict):
-        current_state.setdefault("history", []).append(current_track)
-
-    next_track = guild_queue.pop(0)
-    next_track = await resolve_track_audio(next_track)
-    current_state["current_track"] = next_track
     title = next_track.get("title", "Unknown title")
-    audio_url = next_track.get("stream_url") or next_track.get("source_url") or next_track.get("url")
+
+    audio_url = (
+        next_track.get("stream_url")
+        or next_track.get("source_url")
+        or next_track.get("url")
+    )
 
     if not audio_url:
-        await ctx.send(f"Skipping **{title}** because no valid audio stream was found.")
-        if ctx.guild.id in queues and queues[ctx.guild.id]:
-            asyncio.run_coroutine_threadsafe(play_next_in_queue(ctx), bot.loop)
+        print(f"❌ No audio URL found for: {title}")
+
+        state["current_track"] = None
+        state["skip_requested"] = False
+
+        if guild_queue:
+            await play_next_in_queue(guild_id, channel)
+        else:
+            await update_player_panel(
+                guild_id,
+                channel.id if channel else None
+            )
+
         return
+
+    state["current_track"] = next_track
+    state["skip_requested"] = False
+
+    print(f"▶️ Starting next track: {title}")
 
     source = FFmpegPCMAudio(
         audio_url,
@@ -1259,13 +1406,43 @@ async def play_next_in_queue(ctx):
             print(f"Playback error: {error}")
             return
 
-        if ctx.guild.id in queues and queues[ctx.guild.id]:
-            asyncio.run_coroutine_threadsafe(play_next_in_queue(ctx), bot.loop)
+        asyncio.run_coroutine_threadsafe(
+            play_next_in_queue(
+                guild_id,
+                channel
+            ),
+            bot.loop
+        )
 
-    ctx.voice_client.play(source, after=after_play)
-    await send_temporary_message(ctx, f"Playing **{title}** 🎵")
-    if getattr(ctx, "channel", None) is not None:
-        await update_player_panel(ctx.guild.id, ctx.channel.id)
+    try:
+        voice_client.play(
+            source,
+            after=after_play
+        )
+
+    except Exception as e:
+        print(f"❌ Failed to start audio: {e}")
+
+        state["current_track"] = None
+
+        if guild_queue:
+            asyncio.run_coroutine_threadsafe(
+                play_next_in_queue(guild_id, channel),
+                bot.loop
+            )
+
+        return
+
+    await send_temporary_message(
+        channel,
+        f"Playing **{title}** 🎵"
+    )
+
+    await update_player_panel(
+        guild_id,
+        channel.id if channel else None
+    )
+
 
 async def setup_vynlo_channel(guild):
     channel_name = "VynloMusic🎵"
@@ -1421,8 +1598,10 @@ async def play(ctx, url):
                     print(f"Playback error: {error}")
                     return
 
-                if ctx.guild.id in queues and queues[ctx.guild.id]:
-                    asyncio.run_coroutine_threadsafe(play_next_in_queue(ctx), bot.loop)
+                asyncio.run_coroutine_threadsafe(
+                    play_next_in_queue(ctx.guild.id, ctx.channel),
+                    bot.loop
+                )
 
             ctx.voice_client.play(source, after=after_play)
             asyncio.run_coroutine_threadsafe(update_player_panel(ctx.guild.id, ctx.channel.id), bot.loop)
@@ -1463,8 +1642,10 @@ async def play(ctx, url):
             print(f"Playback error: {error}")
             return
 
-        if ctx.guild.id in queues and queues[ctx.guild.id]:
-            asyncio.run_coroutine_threadsafe(play_next_in_queue(ctx), bot.loop)
+        asyncio.run_coroutine_threadsafe(
+            play_next_in_queue(ctx.guild.id, ctx.channel),
+            bot.loop
+        )
 
     ctx.voice_client.play(source, after=after_play)
     await update_player_panel(ctx.guild.id, ctx.channel.id)
