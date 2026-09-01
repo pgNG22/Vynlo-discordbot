@@ -126,7 +126,10 @@ def get_pause_resume_label(voice_client):
     return "Pause"
 
 
-async def send_temporary_message(ctx, message, *, delete_after=5):
+async def send_temporary_message(ctx, message, *, delete_after=10):
+    await ctx.send(message, delete_after=delete_after)
+
+async def send_temporary_message_info(ctx, message, *, delete_after=30):
     await ctx.send(message, delete_after=delete_after)
 
 
@@ -1559,20 +1562,23 @@ async def join(ctx):
     await channel.connect()
     player_channel = await setup_vynlo_channel(ctx.guild)
     await create_or_update_player_panel(ctx.guild, player_channel)
-    await send_temporary_message(
-        ctx,
-        f"✅ Joined {channel}!\n\n"
-        "**Vynlo music controls**\n"
-        "• `!play <url>` — play a song or playlist\n"
-        "• `!queue` — see the current queue\n"
-        "• `!skip` — skip the current track\n"
-        "• `!clearqueue` — clear the queue\n"
-        "• `!leave` — disconnect the bot\n\n"
-        "**Playback controls**\n"
-        "• `!pause` — pause the music\n"
-        "• `!resume` — resume playback\n"
-        "• `!stop` — stop and clear everything\n",
-    )
+    await send_temporary_message_info(
+    ctx,
+    """🎵 **Vynlo Music**
+
+Vynlo is a simple, button-controlled music player built for Discord. Everything you need is available directly from the **VynloMusic** player — no `/play`, `!skip`, or other text commands to remember.
+
+Vynlo will automatically create a **#VynloMusic🎵** channel for your server, with the music player already waiting for you.
+
+**Simply:**
+
+**1.** 🔊 Join a voice channel  
+**2.** 🎵 Open **#VynloMusic🎵**  
+**3.** ➕ Click **Add to Queue**  
+**4.** 🔗 Paste a YouTube link
+
+Vynlo will find you in your voice channel and start playing your music.""",
+)
 
 
 @bot.command()
@@ -1589,21 +1595,23 @@ async def start(ctx):
 
 @bot.command()
 async def info(ctx):
-    await send_temporary_message(
-        ctx,
-        "🎵 **Vynlo music bot**\n\n"
-        "**What I can do**\n"
-        "• `!play <url>` — play a single track or a whole playlist\n"
-        "• `!queue` — show what’s queued up next\n"
-        "• `!skip` — skip the currently playing track\n"
-        "• `!clearqueue` — remove everything from the queue\n"
-        "• `!leave` — disconnect the bot from the voice channel\n\n"
-        "**Playback controls**\n"
-        "• `!pause` — pause the current track\n"
-        "• `!resume` — continue where you left off\n"
-        "• `!stop` — stop playback and clear the queue\n\n"
-        "**Tip**: You can paste a YouTube song link or playlist link directly after `!play`.",
-    )
+    await send_temporary_message_info(
+    ctx,
+    """🎵 **Vynlo Music**
+
+Vynlo is a simple, button-controlled music player built for Discord. Everything you need is available directly from the **VynloMusic** player — no `/play`, `!skip`, or other text commands to remember.
+
+Vynlo will automatically create a **#VynloMusic🎵** channel for your server, with the music player already waiting for you.
+
+**Simply:**
+
+**1.** 🔊 Join a voice channel  
+**2.** 🎵 Open **#VynloMusic🎵**  
+**3.** ➕ Click **Add to Queue**  
+**4.** 🔗 Paste a YouTube link
+
+Vynlo will find you in your voice channel and start playing your music.""",
+)
 
 
 @bot.command()
