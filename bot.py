@@ -28,13 +28,36 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 queues = {}
 player_panels = {}
 player_state = {}
+MAX_HISTORY_ITEMS = 25
 DEFAULT_EMBED_IMAGE = (
     "https://raw.githubusercontent.com/pgNG22/Vynlo-discordbot/main/img/thumbnail-fallback.png"
 )
 
 
+def trim_history(history):
+    if len(history) > MAX_HISTORY_ITEMS:
+        del history[:-MAX_HISTORY_ITEMS]
+    return history
+
+
+def record_history_entry(state, track):
+    history = state.setdefault("history", [])
+    history.append(track)
+    state["history"] = trim_history(history)
+    return state["history"]
+
+
 def get_server_queue(guild_id):
     return queues.setdefault(guild_id, [])
+
+
+def clear_guild_state(guild_id):
+    queues.pop(guild_id, None)
+    player_state.pop(guild_id, None)
+
+    for key in list(player_panels):
+        if key[0] == guild_id:
+            del player_panels[key]
 
 
 def get_now_playing_track(guild_id):
@@ -59,7 +82,7 @@ def get_player_state(guild_id):
     state.setdefault("volume", 100)
     state.setdefault("loop", "off")
     state.setdefault("shuffle", False)
-    state.setdefault("history", [])
+    state["history"] = trim_history(state.setdefault("history", []))
     state.setdefault("current_track", None)
     state.setdefault("skip_requested", False)
     return state
@@ -484,6 +507,8 @@ class QueueAddModal(discord.ui.Modal):
                     )
                     return
 
+                tracks = [compact_track(track) for track in tracks]
+
                 voice_client = interaction.guild.voice_client
 
                 # If something is already playing/paused, or there is
@@ -576,7 +601,7 @@ class QueueAddModal(discord.ui.Modal):
             return
 
         # Build track object
-        track = {
+        track = compact_track({
             "title": info.get("title", "Unknown title"),
             "source_url": info.get("webpage_url") or info.get("url") or url,
             "url": info.get("webpage_url") or info.get("url") or url,
@@ -585,7 +610,7 @@ class QueueAddModal(discord.ui.Modal):
             "duration": info.get("duration"),
             "thumbnail": info.get("thumbnail"),
             "requested_by": interaction.user.display_name or interaction.user.name,
-        }
+        })
 
         voice_client = interaction.guild.voice_client
 
@@ -1246,6 +1271,39 @@ def build_playlist_track_url(entry, fallback_url):
     return fallback_url
 
 
+def canonical_track_url(track):
+    if not isinstance(track, dict):
+        return None
+    return (
+        track.get("stream_url")
+        or track.get("url")
+        or track.get("source_url")
+    )
+
+
+def compact_track(track):
+    if not isinstance(track, dict):
+        return track
+
+    url = track.get("source_url") or track.get("url") or track.get("stream_url")
+    if url:
+        track["source_url"] = track.get("source_url") or url
+        track["url"] = track.get("url") or url
+
+    stream_url = track.get("stream_url")
+    if stream_url == track.get("url"):
+        track.pop("stream_url", None)
+
+    track.pop("thumbnail", None)
+
+    # Keep only metadata we still actually use. This reduces memory without
+    # breaking queue resolution, playback, or UI rendering.
+    if not track.get("requested_by"):
+        track.pop("requested_by", None)
+
+    return track
+
+
 def build_queue_message(guild_id):
     queue = queues.get(guild_id, [])
     if not queue:
@@ -1298,12 +1356,12 @@ async def extract_audio_info(url):
 async def extract_playlist_tracks(url):
     if not is_playlist_url(url):
         info = await extract_audio_info(url)
-        return [{
+        return [compact_track({
             "title": info.get("title", "Unknown title"),
             "source_url": info.get("webpage_url") or info.get("url") or url,
             "url": info.get("webpage_url") or info.get("url") or url,
             "stream_url": info.get("url") or info.get("webpage_url") or url,
-        }]
+        })]
 
     ydl_opts = {
         "extract_flat": True,
@@ -1343,20 +1401,20 @@ async def extract_playlist_tracks(url):
         if not entry:
             continue
         track_url = build_playlist_track_url(entry, url)
-        tracks.append({
+        tracks.append(compact_track({
             "title": entry.get("title", "Unknown title"),
             "source_url": track_url,
             "url": track_url,
             "stream_url": None,
-        })
+        }))
 
     return tracks
 
 
 async def resolve_track_audio(track):
-    queue_url = track.get("source_url") or track.get("url") or track.get("stream_url")
+    queue_url = canonical_track_url(track)
     if not queue_url:
-        return track
+        return compact_track(track)
 
     info = await extract_audio_info(queue_url)
     title = info.get("title") or track.get("title") or "Unknown title"
@@ -1369,8 +1427,9 @@ async def resolve_track_audio(track):
     track["artist"] = artist
     track["duration"] = duration
     track["thumbnail"] = thumbnail or track.get("thumbnail")
+    track["url"] = track.get("url") or queue_url
     track["stream_url"] = audio_url
-    track["requested_by"] = track.get("requested_by")  # Preserve requester info
+    track["requested_by"] = track.get("requested_by")
     return track
 
 
@@ -1389,7 +1448,7 @@ async def play_next_in_queue(guild_id, channel):
     current_track = state.get("current_track")
 
     if current_track and isinstance(current_track, dict):
-        state.setdefault("history", []).append(current_track)
+        record_history_entry(state, current_track)
 
     # Nothing left in the queue
     if not guild_queue:
@@ -1435,11 +1494,7 @@ async def play_next_in_queue(guild_id, channel):
 
     title = next_track.get("title", "Unknown title")
 
-    audio_url = (
-        next_track.get("stream_url")
-        or next_track.get("source_url")
-        or next_track.get("url")
-    )
+    audio_url = canonical_track_url(next_track)
 
     if not audio_url:
         print(f"❌ No audio URL found for: {title}")
@@ -1571,6 +1626,11 @@ async def on_guild_join(guild):
         )
 
 
+@bot.event
+async def on_guild_remove(guild):
+    clear_guild_state(guild.id)
+
+
 # here we are adding another ! command, this one would be !join
 @bot.command()
 async def join(ctx):
@@ -1647,6 +1707,7 @@ async def leave(ctx):
 
     guild_queue = get_server_queue(ctx.guild.id)
     guild_queue.clear()
+    clear_guild_state(ctx.guild.id)
     connectedchannel = ctx.voice_client
     await connectedchannel.disconnect()
     await send_temporary_message(ctx, "Disconnected from the voice channel and cleared the queue.")
@@ -1714,7 +1775,7 @@ async def play(ctx, url):
         await send_temporary_message(ctx, "I could not find audio for that URL. Please try another one.")
         return
 
-    track = {
+    track = compact_track({
         "title": info.get("title", "Unknown title"),
         "source_url": info.get("webpage_url") or info.get("url") or url,
         "url": info.get("webpage_url") or info.get("url") or url,
@@ -1723,7 +1784,7 @@ async def play(ctx, url):
         "duration": info.get("duration"),
         "thumbnail": info.get("thumbnail"),
         "requested_by": ctx.author.display_name or ctx.author.name,
-    }
+    })
 
     if ctx.voice_client.is_playing() or ctx.voice_client.is_paused() or guild_queue:
         guild_queue.append(track)
