@@ -25,6 +25,31 @@ def test_build_queue_message_for_empty_queue():
     assert bot.build_queue_message(456) == "The queue is empty."
 
 
+def test_player_state_history_is_bounded():
+    bot.player_state.clear()
+    state = bot.get_player_state(999)
+
+    for index in range(50):
+        bot.record_history_entry(state, {"title": f"Track {index}"})
+
+    assert len(state["history"]) <= 25
+
+
+def test_compact_track_removes_duplicate_url_fields():
+    compact = bot.compact_track({
+        "title": "Song",
+        "source_url": "https://example.com/watch?v=abc",
+        "url": "https://example.com/watch?v=abc",
+        "stream_url": "https://example.com/watch?v=abc",
+        "thumbnail": "https://example.com/thumb.jpg",
+    })
+
+    assert compact["source_url"] == "https://example.com/watch?v=abc"
+    assert compact["url"] == "https://example.com/watch?v=abc"
+    assert "stream_url" not in compact
+    assert "thumbnail" not in compact
+
+
 def test_build_queue_embed_uses_default_image_for_stable_layout():
     bot.queues.clear()
 
