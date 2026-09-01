@@ -25,6 +25,33 @@ def test_build_queue_message_for_empty_queue():
     assert bot.build_queue_message(456) == "The queue is empty."
 
 
+def test_build_queue_embed_uses_default_image_for_stable_layout():
+    bot.queues.clear()
+
+    embed = bot.build_queue_embed(789)
+
+    assert embed.image is not None
+    assert embed.image.url == bot.DEFAULT_EMBED_IMAGE
+
+
+def test_build_queue_embed_uses_current_track_thumbnail_when_available():
+    bot.queues.clear()
+    bot.player_state.clear()
+    bot.player_state[789] = {
+        "current_track": {
+            "title": "Now Playing Track",
+            "thumbnail": "https://example.com/current-thumb.jpg",
+        }
+    }
+    bot.queues[789] = [{"title": "Queued Track", "thumbnail": "https://example.com/queued-thumb.jpg"}]
+
+    embed = bot.build_queue_embed(789)
+
+    assert embed.image is not None
+    assert embed.image.url == "https://example.com/current-thumb.jpg"
+    assert embed.title == "LIVE QUEUE"
+
+
 def test_is_playlist_url_detects_youtube_playlist_links():
     assert bot.is_playlist_url("https://www.youtube.com/watch?v=Qe6T4dSnWhI&list=PLWsZ-9SQjWmE&index=2")
     assert bot.is_playlist_url("https://www.youtube.com/playlist?list=PLWsZ-9SQjWmE")
@@ -273,3 +300,21 @@ def test_send_temporary_message_sets_auto_delete_timeout():
 
     assert sent["message"] == "hello"
     assert sent["kwargs"]["delete_after"] == 5
+
+
+def test_send_temporary_interaction_message_is_ephemeral_and_auto_deletes():
+    sent = {}
+
+    class FakeInteraction:
+        class followup:
+            @staticmethod
+            async def send(message, ephemeral=True, delete_after=5):
+                sent["message"] = message
+                sent["ephemeral"] = ephemeral
+                sent["delete_after"] = delete_after
+
+    asyncio.run(bot.send_temporary_interaction_message(FakeInteraction(), "hello"))
+
+    assert sent["message"] == "hello"
+    assert sent["ephemeral"] is True
+    assert sent["delete_after"] == 5
