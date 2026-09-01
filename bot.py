@@ -1547,6 +1547,29 @@ async def on_ready():
         if channel:
             await create_or_update_player_panel(guild, channel)
 
+@bot.event
+async def on_guild_join(guild):
+    print(f"\n🎉 Vynlo joined a new server: {guild.name}")
+
+    try:
+        channel = await setup_vynlo_channel(guild)
+
+        if channel:
+            print(f"🎵 Vynlo channel ready: #{channel.name}")
+
+            await create_or_update_player_panel(
+                guild,
+                channel
+            )
+
+            print(f"✅ Player panel created in {guild.name}")
+
+    except Exception as e:
+        print(
+            f"❌ Failed to set up Vynlo in "
+            f"{guild.name}: {type(e).__name__}: {e}"
+        )
+
 
 # here we are adding another ! command, this one would be !join
 @bot.command()
