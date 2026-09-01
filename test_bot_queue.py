@@ -164,6 +164,18 @@ def test_get_pause_resume_label_uses_current_voice_state():
     assert bot.get_pause_resume_label(FakeVoiceClient()) == "Pause"
 
 
+def test_build_player_embed_uses_fallback_image_when_idle():
+    bot.queues.clear()
+    bot.player_state.clear()
+
+    embed = bot.build_player_embed(321)
+
+    assert embed.description is not None
+    assert "Nothing is playing right now" in embed.description
+    assert embed.image is not None
+    assert embed.image.url.startswith("http")
+
+
 def test_build_player_embed_shows_queue_and_track_details():
     bot.queues.clear()
     bot.queues[321] = [{

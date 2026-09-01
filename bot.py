@@ -150,7 +150,7 @@ def format_duration(value):
         return f"{hours}:{minutes:02d}:{seconds:02d}"
     return f"{minutes}:{seconds:02d}"
 
-
+ 
 def build_queue_embed(guild_id):
     queue = queues.get(guild_id, [])
     embed = discord.Embed(
@@ -186,6 +186,10 @@ def build_player_embed(guild_id):
     current_track = get_now_playing_track(guild_id)
     volume_percent = get_volume_percent(guild_id)
     loop_label = get_loop_label(guild_id)
+    fallback_thumbnail = (
+        "https://images.unsplash.com/photo-1516280440614-37939bbacd81"
+        "?auto=format&fit=crop&w=1200&q=80"
+    )
 
     # Determine playback state
     if voice_client is None:
@@ -223,6 +227,8 @@ def build_player_embed(guild_id):
         # Album artwork
         if current_track.get("thumbnail"):
             embed.set_image(url=current_track["thumbnail"])
+        else:
+            embed.set_image(url=fallback_thumbnail)
 
     else:
         embed.description = (
@@ -230,6 +236,7 @@ def build_player_embed(guild_id):
             "### Nothing is playing right now\n"
             "Add a song to the queue to get started."
         )
+        embed.set_image(url=fallback_thumbnail)
 
     # Player information
     #embed.add_field(
