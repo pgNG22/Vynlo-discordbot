@@ -187,7 +187,7 @@ def build_player_embed(guild_id):
     volume_percent = get_volume_percent(guild_id)
     loop_label = get_loop_label(guild_id)
     fallback_thumbnail = (
-        "https://images.unsplash.com/photo-1516280440614-37939bbacd81"
+        "https://raw.githubusercontent.com/pgNG22/Vynlo-discordbot/main/img/thumbnail-fallback.png"
         "?auto=format&fit=crop&w=1200&q=80"
     )
 
