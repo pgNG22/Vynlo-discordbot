@@ -345,6 +345,18 @@ def test_send_temporary_interaction_message_is_ephemeral_and_auto_deletes():
     assert sent["delete_after"] == 5
 
 
+def test_persistent_playlist_message_is_deleted_when_playback_starts():
+    deleted = []
+
+    class FakeMessage:
+        async def delete(self):
+            deleted.append(True)
+
+    asyncio.run(bot.delete_playlist_status_message(FakeMessage()))
+
+    assert deleted == [True]
+
+
 def test_disconnect_after_idle_leaves_empty_voice_channel(monkeypatch):
     class FakeVoiceClient:
         def __init__(self):
