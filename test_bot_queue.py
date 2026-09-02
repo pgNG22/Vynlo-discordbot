@@ -343,3 +343,70 @@ def test_send_temporary_interaction_message_is_ephemeral_and_auto_deletes():
     assert sent["message"] == "hello"
     assert sent["ephemeral"] is True
     assert sent["delete_after"] == 5
+
+
+def test_disconnect_after_idle_leaves_empty_voice_channel(monkeypatch):
+    class FakeVoiceClient:
+        def __init__(self):
+            self.disconnected = False
+
+        def is_playing(self):
+            return False
+
+        def is_paused(self):
+            return False
+
+        async def disconnect(self):
+            self.disconnected = True
+
+    voice_client = FakeVoiceClient()
+    guild = type("Guild", (), {"voice_client": voice_client})()
+    bot.player_state.clear()
+    bot.queues.clear()
+    bot.get_player_state(123)["current_track"] = {"title": "Finished"}
+
+    async def immediate_sleep(delay):
+        assert delay == bot.IDLE_DISCONNECT_SECONDS
+
+    async def fake_update_player_panel(guild_id, channel_id=None):
+        assert guild_id == 123
+
+    monkeypatch.setattr(bot.asyncio, "sleep", immediate_sleep)
+    monkeypatch.setattr(bot.bot, "get_guild", lambda guild_id: guild)
+    monkeypatch.setattr(bot, "update_player_panel", fake_update_player_panel)
+
+    asyncio.run(bot.disconnect_after_idle(123, 456))
+
+    assert voice_client.disconnected
+    assert bot.get_player_state(123)["current_track"] is None
+
+
+def test_disconnect_after_idle_keeps_voice_channel_when_queue_is_refilled(monkeypatch):
+    class FakeVoiceClient:
+        def __init__(self):
+            self.disconnected = False
+
+        def is_playing(self):
+            return False
+
+        def is_paused(self):
+            return False
+
+        async def disconnect(self):
+            self.disconnected = True
+
+    voice_client = FakeVoiceClient()
+    guild = type("Guild", (), {"voice_client": voice_client})()
+    bot.player_state.clear()
+    bot.queues.clear()
+    bot.queues[123] = [{"title": "Queued again"}]
+
+    async def immediate_sleep(delay):
+        assert delay == bot.IDLE_DISCONNECT_SECONDS
+
+    monkeypatch.setattr(bot.asyncio, "sleep", immediate_sleep)
+    monkeypatch.setattr(bot.bot, "get_guild", lambda guild_id: guild)
+
+    asyncio.run(bot.disconnect_after_idle(123, 456))
+
+    assert not voice_client.disconnected
