@@ -1420,7 +1420,7 @@ async def resolve_track_audio(track):
         return compact_track(track)
 
     info = await extract_audio_info(queue_url)
-    title = info.get("title") or track.get("title") or "Unknown title"
+    title = track.get("title") or info.get("title") or "Unknown title"
     artist = info.get("artist") or info.get("uploader") or track.get("artist") or "Unknown artist"
     duration = info.get("duration") or track.get("duration")
     audio_url = info.get("url") or track.get("stream_url") or queue_url
