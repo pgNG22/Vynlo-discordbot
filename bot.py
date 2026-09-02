@@ -1280,12 +1280,12 @@ def canonical_track_url(track):
         or track.get("source_url")
     )
 
-
 def compact_track(track):
     if not isinstance(track, dict):
         return track
 
     url = track.get("source_url") or track.get("url") or track.get("stream_url")
+
     if url:
         track["source_url"] = track.get("source_url") or url
         track["url"] = track.get("url") or url
@@ -1294,14 +1294,17 @@ def compact_track(track):
     if stream_url == track.get("url"):
         track.pop("stream_url", None)
 
-    track.pop("thumbnail", None)
+    # Keep the thumbnail because the player panel uses it
+    # for the currently playing track.
+    if not track.get("thumbnail"):
+        track.pop("thumbnail", None)
 
-    # Keep only metadata we still actually use. This reduces memory without
-    # breaking queue resolution, playback, or UI rendering.
+    # Keep only metadata we still actually use.
     if not track.get("requested_by"):
         track.pop("requested_by", None)
 
     return track
+
 
 
 def build_queue_message(guild_id):
