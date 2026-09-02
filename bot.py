@@ -90,6 +90,7 @@ def get_player_state(guild_id):
     state["history"] = trim_history(state.setdefault("history", []))
     state.setdefault("current_track", None)
     state.setdefault("skip_requested", False)
+    state.setdefault("pending_playlist_message", None)
     state.setdefault("idle_disconnect_task", None)
     return state
 
@@ -225,6 +226,34 @@ async def send_temporary_interaction_message(interaction, message, *, ephemeral=
                 pass
     except Exception as e:
         print(f"Failed to send temporary interaction message: {e}")
+
+
+async def send_persistent_interaction_message(interaction, message):
+    try:
+        return await interaction.followup.send(message, ephemeral=False)
+    except Exception as e:
+        print(f"Failed to send persistent interaction message: {e}")
+        return None
+
+
+async def update_playlist_status_message(message, content):
+    if message is None:
+        return
+
+    try:
+        await message.edit(content=content)
+    except Exception as e:
+        print(f"Failed to update playlist status message: {e}")
+
+
+async def delete_playlist_status_message(message):
+    if message is None:
+        return
+
+    try:
+        await message.delete()
+    except Exception as e:
+        print(f"Failed to delete playlist status message: {e}")
 
 
 async def cleanup_user_command_message(ctx):
@@ -542,31 +571,32 @@ class QueueAddModal(discord.ui.Modal):
             await interaction.user.voice.channel.connect()
 
         guild_queue = get_server_queue(interaction.guild.id)
+        playlist_message = None
 
         try:
             # ---------------------------------------------------------
             # PLAYLIST
             # ---------------------------------------------------------
             if is_playlist_url(url):
-                await send_temporary_interaction_message(
+                playlist_message = await send_persistent_interaction_message(
                     interaction,
-                    "Playlist detected. Vynlo is building the queue... This may take a moment.",
-                    ephemeral=False,
-                    delete_after=3
+                    "⏳ Playlist detected. Vynlo is building the queue... This may take a moment."
                 )
                 
                 tracks = await extract_playlist_tracks(url)
 
                 if not tracks:
-                    await send_temporary_interaction_message(
-                        interaction,
-                        "I could not find any playable tracks in that playlist.",
-                        ephemeral=False,
-                        delete_after=3
+                    await update_playlist_status_message(
+                        playlist_message,
+                        "I could not find any playable tracks in that playlist."
                     )
                     return
 
-                tracks = [compact_track(track) for track in tracks]
+                requester_name = interaction.user.display_name or interaction.user.name
+                tracks = [
+                    compact_track({**track, "requested_by": requester_name})
+                    for track in tracks
+                ]
 
                 voice_client = interaction.guild.voice_client
 
@@ -578,11 +608,7 @@ class QueueAddModal(discord.ui.Modal):
                     or guild_queue
                 ):
                     guild_queue.extend(tracks)
-
-                    await send_temporary_interaction_message(
-                        interaction,
-                        f"Added **{len(tracks)} tracks** from the playlist to the queue."
-                    )
+                    get_player_state(interaction.guild.id)["pending_playlist_message"] = playlist_message
 
                     await update_player_panel(
                         interaction.guild.id,
@@ -642,6 +668,13 @@ class QueueAddModal(discord.ui.Modal):
                     after=after_play
                 )
 
+                await delete_playlist_status_message(playlist_message)
+                await send_temporary_interaction_message(
+                    interaction,
+                    f"Playing **{first_track['title']}** 🎵",
+                    ephemeral=False
+                )
+
                 await update_player_panel(
                     interaction.guild.id,
                     interaction.channel.id
@@ -656,6 +689,11 @@ class QueueAddModal(discord.ui.Modal):
 
         except Exception as e:
             print(f"QueueAddModal error: {e}")
+
+            await update_playlist_status_message(
+                playlist_message,
+                "I could not find audio for that URL. Please try another one."
+            )
 
             await send_temporary_interaction_message(
                 interaction,
@@ -1692,6 +1730,9 @@ async def play_next_in_queue(guild_id, channel):
 
         return
 
+    pending_playlist_message = state.pop("pending_playlist_message", None)
+    await delete_playlist_status_message(pending_playlist_message)
+
     await send_temporary_message(
         channel,
         f"Playing **{title}** 🎵"
@@ -1864,13 +1905,19 @@ async def play(ctx, url):
         await ctx.author.voice.channel.connect()
 
     guild_queue = get_server_queue(ctx.guild.id)
+    playlist_message = None
 
     try:
         if is_playlist_url(url):
-            await send_temporary_message(ctx, "Playlist detected — building the rest of the playlist and starting playback...")
+            playlist_message = await ctx.send(
+                "⏳ Playlist detected — building the rest of the playlist and starting playback..."
+            )
             tracks = await extract_playlist_tracks(url)
             if not tracks:
-                await send_temporary_message(ctx, "I could not find any playable tracks in that playlist.")
+                await update_playlist_status_message(
+                    playlist_message,
+                    "I could not find any playable tracks in that playlist."
+                )
                 return
 
             requester_name = ctx.author.display_name or ctx.author.name
@@ -1879,7 +1926,7 @@ async def play(ctx, url):
 
             if ctx.voice_client.is_playing() or ctx.voice_client.is_paused() or guild_queue:
                 guild_queue.extend(tracks)
-                await send_temporary_message(ctx, f"Added **{len(tracks)} tracks** from the playlist to the queue.")
+                get_player_state(ctx.guild.id)["pending_playlist_message"] = playlist_message
                 return
 
             first_track = await resolve_track_audio(tracks[0])
@@ -1887,7 +1934,6 @@ async def play(ctx, url):
                 guild_queue.extend([await resolve_track_audio(track) for track in tracks[1:]])
 
             get_player_state(ctx.guild.id)["current_track"] = first_track
-            await send_temporary_message(ctx, f"Playing **{first_track['title']}** 🎵")
 
             source = FFmpegPCMAudio(
                 first_track["stream_url"],
@@ -1910,11 +1956,17 @@ async def play(ctx, url):
                 )
 
             ctx.voice_client.play(source, after=after_play)
+            await delete_playlist_status_message(playlist_message)
+            await send_temporary_message(ctx, f"Playing **{first_track['title']}** 🎵")
             asyncio.run_coroutine_threadsafe(update_player_panel(ctx.guild.id, ctx.channel.id), bot.loop)
             return
 
         info = await extract_audio_info(url)
     except Exception:
+        await update_playlist_status_message(
+            playlist_message,
+            "I could not find audio for that URL. Please try another one."
+        )
         await send_temporary_message(ctx, "I could not find audio for that URL. Please try another one.")
         return
 
