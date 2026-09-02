@@ -188,7 +188,7 @@ def format_duration(value):
         return str(value)
 
     minutes, seconds = divmod(seconds, 60)
-    hours, minutes = divmod(minutes, 24)
+    hours, minutes = divmod(minutes, 60)
     if hours:
         return f"{hours}:{minutes:02d}:{seconds:02d}"
     return f"{minutes}:{seconds:02d}"
@@ -680,25 +680,43 @@ class QueueView(discord.ui.View):
         self.guild_id = guild_id
         self.channel_id = channel_id
 
-        self.add_button = discord.ui.Button(
-            label="Add to Queue",
-            emoji="➕",
-            style=discord.ButtonStyle.primary,
-            row=0
-        )
+        # ─────────────────────────────
+        # ROW 0
+        # ─────────────────────────────
+
+        # Left spacer
+        self.add_item(discord.ui.Button(
+            label="\u200b",
+            style=discord.ButtonStyle.secondary,
+            disabled=True,
+            row=0,
+        ))
 
         self.back_button = discord.ui.Button(
-            label="Back to Player",
-            emoji="🔙",
+            label="↶ Return to Player",
             style=discord.ButtonStyle.secondary,
             row=0
         )
+        self.add_item(self.back_button)
 
+        self.add_button = discord.ui.Button(
+            label="+ Add to Queue",
+            style=discord.ButtonStyle.primary,
+            row=0
+        )
+        self.add_item(self.add_button)
+
+        # Right spacer
+        self.add_item(discord.ui.Button(
+            label="\u200b",
+            style=discord.ButtonStyle.secondary,
+            disabled=True,
+            row=0,
+        ))
+
+        # Callbacks
         self.add_button.callback = self.add_to_queue_callback
         self.back_button.callback = self.back_to_player_callback
-
-        self.add_item(self.add_button)
-        self.add_item(self.back_button)
 
     async def add_to_queue_callback(self, interaction):
         await interaction.response.send_modal(
@@ -728,9 +746,16 @@ class MusicPlayerView(discord.ui.View):
         # ROW 0 — MAIN PLAYER CONTROLS
         # ─────────────────────────────
 
+        # Left spacer
+        self.add_item(discord.ui.Button(
+            label="\u200b",
+            style=discord.ButtonStyle.secondary,
+            disabled=True,
+            row=0,
+        ))
+
         self.previous_button = discord.ui.Button(
-            emoji="⏮️",
-            label="Previous",
+            label="⏮",
             custom_id=f"player_previous_{guild_id}",
             style=discord.ButtonStyle.secondary,
             row=0,
@@ -739,18 +764,16 @@ class MusicPlayerView(discord.ui.View):
         self.add_item(self.previous_button)
 
         self.pause_button = discord.ui.Button(
-            emoji="⏸️",
-            label="Pause",
+            label="▐▐",
             custom_id=f"player_pause_{guild_id}",
-            style=discord.ButtonStyle.primary,
+            style=discord.ButtonStyle.secondary,
             row=0,
         )
         self.pause_button.callback = self.pause_resume_callback
         self.add_item(self.pause_button)
 
         self.skip_button = discord.ui.Button(
-            emoji="⏭️",
-            label="Skip",
+            label="⏭",
             custom_id=f"player_skip_{guild_id}",
             style=discord.ButtonStyle.secondary,
             row=0,
@@ -758,13 +781,28 @@ class MusicPlayerView(discord.ui.View):
         self.skip_button.callback = self.skip_callback
         self.add_item(self.skip_button)
 
+        # Right spacer
+        self.add_item(discord.ui.Button(
+            label="\u200b",
+            style=discord.ButtonStyle.secondary,
+            disabled=True,
+            row=0,
+        ))
+
         # ─────────────────────────────
         # ROW 1 — SECONDARY CONTROLS
         # ─────────────────────────────
 
+        # Left spacer
+        self.add_item(discord.ui.Button(
+            label="\u200b",
+            style=discord.ButtonStyle.secondary,
+            disabled=True,
+            row=1,
+        ))
+
         self.shuffle_button = discord.ui.Button(
-            emoji="🔀",
-            label="Shuffle",
+            label="⇄",
             custom_id=f"player_shuffle_{guild_id}",
             style=discord.ButtonStyle.secondary,
             row=1,
@@ -772,18 +810,7 @@ class MusicPlayerView(discord.ui.View):
         self.shuffle_button.callback = self.shuffle_callback
         self.add_item(self.shuffle_button)
 
-        self.loop_button = discord.ui.Button(
-            emoji="🔁",
-            label="Loop",
-            custom_id=f"player_loop_{guild_id}",
-            style=discord.ButtonStyle.secondary,
-            row=1,
-        )
-        self.loop_button.callback = self.loop_callback
-        self.add_item(self.loop_button)
-
         self.queue_button = discord.ui.Button(
-            emoji="📋",
             label="Queue",
             custom_id=f"player_queue_{guild_id}",
             style=discord.ButtonStyle.secondary,
@@ -793,14 +820,21 @@ class MusicPlayerView(discord.ui.View):
         self.add_item(self.queue_button)
 
         self.stop_button = discord.ui.Button(
-            emoji="⏹️",
-            label="Stop",
+            label="◼",
             custom_id=f"player_stop_{guild_id}",
             style=discord.ButtonStyle.danger,
             row=1,
         )
         self.stop_button.callback = self.stop_callback
         self.add_item(self.stop_button)
+
+        # Right spacer
+        self.add_item(discord.ui.Button(
+            label="\u200b",
+            style=discord.ButtonStyle.secondary,
+            disabled=True,
+            row=1,
+        ))
 
         self.refresh_state()
 
@@ -810,39 +844,46 @@ class MusicPlayerView(discord.ui.View):
         state = get_player_state(self.guild_id)
 
         if voice_client is None:
+            # Previous
             self.previous_button.disabled = True
 
-            self.pause_button.emoji = "▶️"
-            self.pause_button.label = "Play"
+            # Play / Pause
+            self.pause_button.label = "▶"
             self.pause_button.disabled = True
+            self.pause_button.style = discord.ButtonStyle.secondary
 
+            # Skip
             self.skip_button.disabled = True
+
+            # Shuffle
             self.shuffle_button.disabled = True
-
-            self.loop_button.emoji = "🔁"
-            self.loop_button.label = "Loop"
-            self.loop_button.disabled = False
-
-            self.queue_button.disabled = False
-            self.stop_button.disabled = True
-
+            self.shuffle_button.label = "⇄"
             self.shuffle_button.style = discord.ButtonStyle.secondary
-            self.loop_button.style = discord.ButtonStyle.secondary
+
+            # Queue
+            self.queue_button.disabled = False
+
+            # Stop
+            self.stop_button.disabled = True
 
             return
 
-        # Previous
+        # ─────────────────────────────
+        # PREVIOUS
+        # ─────────────────────────────
+
         self.previous_button.disabled = not bool(
             state.get("history")
         )
 
-        # Pause / Resume
+        # ─────────────────────────────
+        # PAUSE / RESUME
+        # ─────────────────────────────
+
         if voice_client.is_paused():
-            self.pause_button.emoji = "▶️"
-            self.pause_button.label = "Resume"
+            self.pause_button.label = "▶"
         else:
-            self.pause_button.emoji = "⏸️"
-            self.pause_button.label = "Pause"
+            self.pause_button.label = "▐▐"
 
         self.pause_button.disabled = not (
             voice_client.is_playing()
@@ -853,43 +894,44 @@ class MusicPlayerView(discord.ui.View):
             discord.ButtonStyle.success
             if voice_client.is_playing()
             or voice_client.is_paused()
-            else discord.ButtonStyle.primary
+            else discord.ButtonStyle.secondary
         )
 
-        # Skip
+        # ─────────────────────────────
+        # SKIP
+        # ─────────────────────────────
+
         self.skip_button.disabled = not (
             voice_client.is_playing()
             or voice_client.is_paused()
         )
 
-        # Shuffle
+        # ─────────────────────────────
+        # SHUFFLE
+        # ─────────────────────────────
+
         self.shuffle_button.disabled = (
             len(get_server_queue(self.guild_id)) < 2
         )
 
         if state.get("shuffle"):
             self.shuffle_button.style = discord.ButtonStyle.success
-            self.shuffle_button.label = "Shuffle On"
+            self.shuffle_button.label = "⇄ (On)"
         else:
             self.shuffle_button.style = discord.ButtonStyle.secondary
-            self.shuffle_button.label = "Shuffle"
+            self.shuffle_button.label = "⇄"
 
-        # Loop
-        self.loop_button.emoji = "🔁"
+        # ─────────────────────────────
+        # QUEUE
+        # ─────────────────────────────
 
-        if state.get("loop") != "off":
-            self.loop_button.style = discord.ButtonStyle.success
-            self.loop_button.label = "Loop On"
-        else:
-            self.loop_button.style = discord.ButtonStyle.secondary
-            self.loop_button.label = "Loop"
-
-        self.loop_button.disabled = False
-
-        # Queue
         self.queue_button.disabled = False
+        self.queue_button.style = discord.ButtonStyle.secondary
 
-        # Stop
+        # ─────────────────────────────
+        # STOP
+        # ─────────────────────────────
+
         self.stop_button.disabled = False
 
     async def pause_resume_callback(self, interaction):
