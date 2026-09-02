@@ -29,6 +29,7 @@ queues = {}
 player_panels = {}
 player_state = {}
 MAX_HISTORY_ITEMS = 25
+IDLE_DISCONNECT_SECONDS = 15 * 60
 DEFAULT_EMBED_IMAGE = (
     "https://raw.githubusercontent.com/pgNG22/Vynlo-discordbot/main/img/thumbnail-fallback.png"
 )
@@ -52,6 +53,10 @@ def get_server_queue(guild_id):
 
 
 def clear_guild_state(guild_id):
+    state = player_state.get(guild_id)
+    if state:
+        cancel_idle_disconnect(guild_id)
+
     queues.pop(guild_id, None)
     player_state.pop(guild_id, None)
 
@@ -85,7 +90,59 @@ def get_player_state(guild_id):
     state["history"] = trim_history(state.setdefault("history", []))
     state.setdefault("current_track", None)
     state.setdefault("skip_requested", False)
+    state.setdefault("idle_disconnect_task", None)
     return state
+
+
+def cancel_idle_disconnect(guild_id):
+    state = player_state.get(guild_id)
+    if not state:
+        return
+
+    task = state.get("idle_disconnect_task")
+    if task and not task.done():
+        task.cancel()
+    state["idle_disconnect_task"] = None
+
+
+async def disconnect_after_idle(guild_id, channel_id):
+    try:
+        await asyncio.sleep(IDLE_DISCONNECT_SECONDS)
+
+        guild = bot.get_guild(guild_id)
+        voice_client = guild.voice_client if guild else None
+        state = get_player_state(guild_id)
+        queue = queues.get(guild_id, [])
+
+        if (
+            voice_client is None
+            or queue
+            or voice_client.is_playing()
+            or voice_client.is_paused()
+        ):
+            return
+
+        await voice_client.disconnect()
+        state["current_track"] = None
+        await update_player_panel(guild_id, channel_id)
+    except asyncio.CancelledError:
+        return
+    finally:
+        state = player_state.get(guild_id)
+        if state and state.get("idle_disconnect_task") is asyncio.current_task():
+            state["idle_disconnect_task"] = None
+
+
+def schedule_idle_disconnect(guild_id, channel_id):
+    cancel_idle_disconnect(guild_id)
+    state = get_player_state(guild_id)
+    state["idle_disconnect_task"] = asyncio.create_task(
+        disconnect_after_idle(guild_id, channel_id)
+    )
+
+
+async def arm_idle_disconnect(guild_id, channel_id):
+    schedule_idle_disconnect(guild_id, channel_id)
 
 
 def cycle_loop_mode(guild_id):
@@ -478,6 +535,8 @@ class QueueAddModal(discord.ui.Modal):
             )
             return
 
+        cancel_idle_disconnect(interaction.guild.id)
+
         # Connect to the user's voice channel if needed
         if interaction.guild.voice_client is None:
             await interaction.user.voice.channel.connect()
@@ -561,6 +620,13 @@ class QueueAddModal(discord.ui.Modal):
                 def after_play(error):
                     if error:
                         print(f"Playback error: {error}")
+                        asyncio.run_coroutine_threadsafe(
+                            arm_idle_disconnect(
+                                interaction.guild.id,
+                                interaction.channel.id
+                            ),
+                            bot.loop
+                        )
                         return
 
                     asyncio.run_coroutine_threadsafe(
@@ -651,6 +717,13 @@ class QueueAddModal(discord.ui.Modal):
         def after_play(error):
             if error:
                 print(f"Playback error: {error}")
+                asyncio.run_coroutine_threadsafe(
+                    arm_idle_disconnect(
+                        interaction.guild.id,
+                        interaction.channel.id
+                    ),
+                    bot.loop
+                )
                 return
 
             asyncio.run_coroutine_threadsafe(
@@ -1500,6 +1573,11 @@ async def play_next_in_queue(guild_id, channel):
         state["current_track"] = None
         state["skip_requested"] = False
 
+        schedule_idle_disconnect(
+            guild_id,
+            channel.id if channel else None
+        )
+
         await update_player_panel(
             guild_id,
             channel.id if channel else None
@@ -1513,6 +1591,8 @@ async def play_next_in_queue(guild_id, channel):
         state["current_track"] = None
         state["skip_requested"] = False
         return
+
+    cancel_idle_disconnect(guild_id)
 
     # Get the next track
     next_track = guild_queue.pop(0)
@@ -1530,6 +1610,10 @@ async def play_next_in_queue(guild_id, channel):
         if guild_queue:
             await play_next_in_queue(guild_id, channel)
         else:
+            schedule_idle_disconnect(
+                guild_id,
+                channel.id if channel else None
+            )
             await update_player_panel(
                 guild_id,
                 channel.id if channel else None
@@ -1550,6 +1634,10 @@ async def play_next_in_queue(guild_id, channel):
         if guild_queue:
             await play_next_in_queue(guild_id, channel)
         else:
+            schedule_idle_disconnect(
+                guild_id,
+                channel.id if channel else None
+            )
             await update_player_panel(
                 guild_id,
                 channel.id if channel else None
@@ -1571,6 +1659,10 @@ async def play_next_in_queue(guild_id, channel):
     def after_play(error):
         if error:
             print(f"Playback error: {error}")
+            asyncio.run_coroutine_threadsafe(
+                arm_idle_disconnect(guild_id, channel.id if channel else None),
+                bot.loop
+            )
             return
 
         asyncio.run_coroutine_threadsafe(
@@ -1766,6 +1858,8 @@ async def play(ctx, url):
         await send_temporary_message(ctx, "You are not in a voice channel!")
         return
 
+    cancel_idle_disconnect(ctx.guild.id)
+
     if ctx.voice_client is None:
         await ctx.author.voice.channel.connect()
 
@@ -1804,6 +1898,10 @@ async def play(ctx, url):
             def after_play(error):
                 if error:
                     print(f"Playback error: {error}")
+                    asyncio.run_coroutine_threadsafe(
+                        arm_idle_disconnect(ctx.guild.id, ctx.channel.id),
+                        bot.loop
+                    )
                     return
 
                 asyncio.run_coroutine_threadsafe(
@@ -1849,6 +1947,10 @@ async def play(ctx, url):
     def after_play(error):
         if error:
             print(f"Playback error: {error}")
+            asyncio.run_coroutine_threadsafe(
+                arm_idle_disconnect(ctx.guild.id, ctx.channel.id),
+                bot.loop
+            )
             return
 
         asyncio.run_coroutine_threadsafe(
