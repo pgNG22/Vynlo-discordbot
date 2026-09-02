@@ -35,6 +35,29 @@ def test_player_state_history_is_bounded():
     assert len(state["history"]) <= 25
 
 
+def test_finished_queue_clears_previous_history(monkeypatch):
+    bot.queues.clear()
+    bot.player_state.clear()
+    bot.player_state[123] = {
+        "current_track": {"title": "Finished Song"},
+        "history": [{"title": "Previous Song"}],
+    }
+
+    class FakeGuild:
+        voice_client = None
+
+    async def fake_update_player_panel(guild_id, channel_id=None):
+        pass
+
+    monkeypatch.setattr(bot.bot, "get_guild", lambda guild_id: FakeGuild())
+    monkeypatch.setattr(bot, "update_player_panel", fake_update_player_panel)
+    monkeypatch.setattr(bot, "schedule_idle_disconnect", lambda guild_id, channel_id: None)
+
+    asyncio.run(bot.play_next_in_queue(123, None))
+
+    assert bot.get_player_state(123)["history"] == []
+
+
 def test_compact_track_removes_duplicate_url_fields():
     compact = bot.compact_track({
         "title": "Song",
@@ -160,6 +183,25 @@ def test_resolve_track_audio_populates_stream_url(monkeypatch):
 
     assert resolved["title"] == "Resolved Title"
     assert resolved["stream_url"] == "https://example.com/stream.mp3"
+
+
+def test_resolve_track_audio_reuses_existing_stream_url(monkeypatch):
+    async def fail_extract_audio_info(url):
+        raise AssertionError("already-resolved tracks should not be extracted again")
+
+    monkeypatch.setattr(bot, "extract_audio_info", fail_extract_audio_info)
+    track = {
+        "title": "Cached Track",
+        "source_url": "https://www.youtube.com/watch?v=abc123",
+        "url": "https://www.youtube.com/watch?v=abc123",
+        "stream_url": "https://example.com/cached-stream.mp3",
+        "requested_by": "Listener",
+    }
+
+    resolved = asyncio.run(bot.resolve_track_audio(track))
+
+    assert resolved is track
+    assert resolved["stream_url"] == "https://example.com/cached-stream.mp3"
 
 
 def test_play_next_in_queue_sends_track_title(monkeypatch):

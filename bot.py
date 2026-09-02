@@ -512,6 +512,16 @@ async def update_player_panel(guild_id, channel_id=None):
         print(f"Player panel update failed: {e}")
 
 
+async def update_interaction_player_panel(interaction):
+    await interaction.edit_original_response(
+        embed=build_player_embed(interaction.guild.id),
+        view=MusicPlayerView(
+            interaction.guild.id,
+            interaction.channel.id
+        )
+    )
+
+
 
 class QueueAddModal(discord.ui.Modal):
     def __init__(self, guild_id, channel_id=None):
@@ -1091,10 +1101,7 @@ class MusicPlayerView(discord.ui.View):
             )
             return
 
-        await update_player_panel(
-            interaction.guild.id,
-            interaction.channel.id
-        )
+        await update_interaction_player_panel(interaction)
 
     async def previous_callback(self, interaction):
         await interaction.response.defer()
@@ -1147,10 +1154,7 @@ class MusicPlayerView(discord.ui.View):
 
         voice_client.stop()
 
-        await update_player_panel(
-            interaction.guild.id,
-            interaction.channel.id
-        )
+        await update_interaction_player_panel(interaction)
 
 
     async def skip_callback(self, interaction):
@@ -1205,13 +1209,7 @@ class MusicPlayerView(discord.ui.View):
         # This triggers the after_play() callback.
         voice_client.stop()
 
-        # Give Discord/FFmpeg a moment to finish stopping.
-        await asyncio.sleep(0.15)
-
-        await update_player_panel(
-            guild_id,
-            interaction.channel.id
-        )
+        await update_interaction_player_panel(interaction)
 
 
 
@@ -1249,14 +1247,13 @@ class MusicPlayerView(discord.ui.View):
             return
 
         get_server_queue(interaction.guild.id).clear()
-        get_player_state(interaction.guild.id)["current_track"] = None
+        state = get_player_state(interaction.guild.id)
+        state["current_track"] = None
+        state["history"].clear()
 
         voice_client.stop()
 
-        await update_player_panel(
-            interaction.guild.id,
-            interaction.channel.id
-        )
+        await update_interaction_player_panel(interaction)
 
     async def shuffle_callback(self, interaction):
         await interaction.response.defer()
@@ -1316,10 +1313,7 @@ class MusicPlayerView(discord.ui.View):
             random.shuffle(queue)
             state["shuffle"] = True
 
-        await update_player_panel(
-            interaction.guild.id,
-            interaction.channel.id
-        )
+        await update_interaction_player_panel(interaction)
 
     async def loop_callback(self, interaction):
         await interaction.response.defer()
@@ -1356,10 +1350,7 @@ class MusicPlayerView(discord.ui.View):
 
         cycle_loop_mode(interaction.guild.id)
 
-        await update_player_panel(
-            interaction.guild.id,
-            interaction.channel.id
-        )
+        await update_interaction_player_panel(interaction)
 
     async def queue_callback(self, interaction):
         await interaction.response.edit_message(
@@ -1568,6 +1559,13 @@ async def extract_playlist_tracks(url):
 
 
 async def resolve_track_audio(track):
+    stream_url = track.get("stream_url") if isinstance(track, dict) else None
+    source_url = track.get("source_url") if isinstance(track, dict) else None
+    track_url = track.get("url") if isinstance(track, dict) else None
+
+    if stream_url and stream_url not in {source_url, track_url}:
+        return track
+
     queue_url = canonical_track_url(track)
     if not queue_url:
         return compact_track(track)
@@ -1610,6 +1608,7 @@ async def play_next_in_queue(guild_id, channel):
     if not guild_queue:
         state["current_track"] = None
         state["skip_requested"] = False
+        state["history"].clear()
 
         schedule_idle_disconnect(
             guild_id,
